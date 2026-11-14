@@ -23,11 +23,14 @@ pub fn reviewy() -> &'static Re {
     static R: OnceLock<Re> = OnceLock::new();
     R.get_or_init(|| lit_i(r"\b(review|audit|critique)\b"))
 }
-/// Is this a review request? Judged on what the user typed: `@spec.md` inlines the whole file after the text, and a
-/// spec that says "review" somewhere must not turn "implement this plan" into a review run.
+/// What the user actually typed. `@spec.md` inlines the whole file after the text, so every keyword check (review? fix?
+/// hard task? one agent?) must read this and not the full message: a spec that says "review" somewhere must not turn
+/// "implement this plan" into a review run.
+pub fn typed(message: &str) -> &str {
+    ["\n\n<file path=\"", "\n\n<directory path=\""].iter().filter_map(|m| message.find(m)).min().map_or(message, |i| &message[..i])
+}
 pub fn is_reviewy(message: &str) -> bool {
-    let typed = ["\n\n<file path=\"", "\n\n<directory path=\""].iter().filter_map(|m| message.find(m)).min().map_or(message, |i| &message[..i]);
-    reviewy().is_match(typed)
+    reviewy().is_match(typed(message))
 }
 /// "review it with one single agent", "a single reviewer", "without the pipeline": the main agent reviews it itself.
 pub fn one_agent() -> &'static Re {

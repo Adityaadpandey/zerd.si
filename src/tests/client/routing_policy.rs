@@ -119,3 +119,11 @@ fn review_word_inside_an_attached_file_is_not_a_review_request() {
     assert!(!is_reviewy("implement this plan\n\n<file path=\"spec.md\">\nreview the result at the end\n</file>"));
     assert!(is_reviewy("review @spec.md\n\n<file path=\"spec.md\">\nx\n</file>"));
 }
+
+#[test]
+fn attached_files_do_not_steer_routing() {
+    use crate::agent::routing_policy::typed;
+    let m = "add a button\n\n<file path=\"spec.md\">\nrefactor the auth race condition, review it\n</file>";
+    assert_eq!(typed(m), "add a button");
+    assert_eq!(classify(typed(m)).0, "default");
+}

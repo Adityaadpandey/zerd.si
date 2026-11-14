@@ -12,7 +12,7 @@ use crate::agent::review_fix;
 use crate::agent::review_fix_verify::verify_fix;
 use crate::agent::review_pipeline::{run_review_pipeline, Finding, PipelineEvent};
 use crate::agent::root::pick_root;
-use crate::agent::routing_policy::{classify, effort, keep_cached_model, length_hint, one_agent, is_reviewy};
+use crate::agent::routing_policy::{classify, effort, keep_cached_model, length_hint, one_agent, is_reviewy, typed};
 use crate::agent::scope::{is_broad, SWEEP, SWEEP_CHECKPOINT};
 use crate::agent::session::Session;
 use crate::agent::skills::match_skills;
@@ -387,6 +387,7 @@ impl Agent {
     }
 
     pub async fn run(&mut self, message: &str, tx: Tx) {
+        let ask = typed(message);
         let cfg0 = self.config.get();
         let hook_context = self.session.hook_system.trigger_before_agent(message).await;
         let root = pick_root(&cfg0.cwd, message, self.root_hint.as_deref(), &[]);
@@ -416,7 +417,7 @@ impl Agent {
         self.last_request = message.into();
         let forced = std::mem::take(&mut self.forced_skills); // set by a typed /skill-name, for this request only
         let mut matched = forced.clone();
-        matched.extend(match_skills(&self.session.skills, message, 4).into_iter().filter(|p| !forced.iter().any(|f| f.name == p.name)));
+        matched.extend(match_skills(&self.session.skills, ask, 4).into_iter().filter(|p| !forced.iter().any(|f| f.name == p.name)));
         // a playbook already in the conversation is named, not pasted again
         let playbooks: Vec<_> = matched.iter().filter(|p| !self.playbooks_sent.contains(&p.name)).cloned().collect();
         let again: Vec<String> = matched.iter().filter(|p| self.playbooks_sent.contains(&p.name)).map(|p| p.name.clone()).collect();
@@ -446,9 +447,9 @@ impl Agent {
         self.pipeline_answer.clear();
         self.fix_run = false;
         self.fix_brief.clear();
-        if !self.shown.is_empty() && !is_reviewy(message) && review_fix::asks_for_fix(message) {
+        if !self.shown.is_empty() && !is_reviewy(ask) && review_fix::asks_for_fix(ask) {
             // "fix them" after a review: those findings, with everything the review learned
-            let picked = review_fix::chosen(message, &self.shown);
+            let picked = review_fix::chosen(ask, &self.shown);
             if !picked.is_empty() {
                 self.fix_run = true;
                 self.fix_brief = review_fix::short(&picked);
@@ -456,11 +457,11 @@ impl Agent {
                 notice(&tx, format!("Fixing {} finding(s) from the last review: advisor first, then the fix, then an independent check", picked.len()));
             }
         }
-        let alone = is_reviewy(message) && one_agent().is_match(message);
+        let alone = is_reviewy(ask) && one_agent().is_match(ask);
         if alone {
             notice(&tx, "Reviewing with one agent, as asked: no parallel reviewers");
         }
-        if cfg.review_pipeline && cfg.model_role == "default" && is_reviewy(message) && !alone {
+        if cfg.review_pipeline && cfg.model_role == "default" && is_reviewy(ask) && !alone {
             let mut results = String::new();
             let (ptx, mut prx) = tokio::sync::mpsc::unbounded_channel::<PipelineEvent>();
             {
@@ -483,7 +484,7 @@ impl Agent {
                 }
             }
             self.pipelined = !results.is_empty();
-            if !results.is_empty() && review_fix::review_and_fix(message) {
+            if !results.is_empty() && review_fix::review_and_fix(ask) {
                 let picked = review_fix::chosen("", &self.shown);
                 if !picked.is_empty() {
                     self.fix_run = true;
@@ -508,7 +509,7 @@ impl Agent {
             notice(&tx, "Scout finished; starting from its findings");
             message_for_model.push_str(&format!("\n\n---\nScout report (a cheaper read-only agent already searched; start from it, do not repeat its searches, and confirm any line you rely on before editing):\n{scout}"));
         }
-        if cfg.auto_challenge && is_risky(message) {
+        if cfg.auto_challenge && is_risky(ask) {
             notice(&tx, "Challenger is questioning this request first");
             let (objections, dropped, err) = challenge_request(&cfg, message).await;
             if !err.is_empty() {
@@ -523,8 +524,8 @@ impl Agent {
         }
         self.tidy_if_cache_went_cold(&tx).await;
         let oriented = self.orient(message).await;
-        let wants = oriented.as_ref().map_or_else(|| self.orient_down || wants_change(message), |o| o.intent == "change"); // both models failed to read it: no read-only cap, the main model decides
-        let difficulty: &str = oriented.as_ref().map_or_else(|| classify(message).0, |o| o.tier);
+        let wants = oriented.as_ref().map_or_else(|| self.orient_down || wants_change(ask), |o| o.intent == "change"); // both models failed to read it: no read-only cap, the main model decides
+        let difficulty: &str = oriented.as_ref().map_or_else(|| classify(ask).0, |o| o.tier);
         if let Some(o) = &oriented {
             let w = o.hint();
             if !w.is_empty() {
@@ -543,11 +544,11 @@ impl Agent {
         self.touches = if wants { oriented.as_ref().map(|o| o.touches.clone()).unwrap_or_default() } else { String::new() };
         self.docs_nudged = false;
         self.session.client.set_auto_effort(effort(difficulty));
-        let hint = length_hint(message, difficulty, wants);
+        let hint = length_hint(ask, difficulty, wants);
         if !hint.is_empty() {
             message_for_model.push_str(&format!("\n\n[{hint}]"));
         }
-        self.broad = wants && is_broad(message);
+        self.broad = wants && is_broad(ask);
         if self.broad {
             message_for_model.push_str(&format!("\n\n[{SWEEP}]"));
         }
@@ -574,7 +575,7 @@ impl Agent {
         self.over_noted = false;
         self.read_only = !wants;
         self.wants_change = wants;
-        self.is_review = is_reviewy(message);
+        self.is_review = is_reviewy(ask);
         self.usage_base = self.spent(); // budget is per request
         self.review_sec = 0.0;
         self.tier = "default".into();
@@ -582,7 +583,7 @@ impl Agent {
         if cfg.auto_route && !cfg.model_pinned && cfg.model_role == "default" && (cfg.routing.contains_key("fast") || cfg.routing.contains_key("strong")) {
             let (tier, why) = match &oriented {
                 Some(o) => (o.tier, "read by the fast model".to_string()),
-                None => classify(message),
+                None => classify(ask),
             };
             let ctx = self.session.context_manager.lock().unwrap().latest_usage.total_tokens;
             let kept = keep_cached_model(tier, ctx);
@@ -924,7 +925,7 @@ impl Agent {
         }
         self.last_answer = final_response.clone().unwrap_or_default();
         if let Some(fr) = &final_response {
-            if fr.split_whitespace().count() > LONG_ANSWER_WORDS && !is_reviewy(message) {
+            if fr.split_whitespace().count() > LONG_ANSWER_WORDS && !is_reviewy(ask) {
                 self.long_answer = fr.split_whitespace().count();
             }
         }
@@ -1342,7 +1343,7 @@ impl Agent {
         if !(cfg.auto_scout && cfg.model_role == "default" && reg.get("subagent_investigator").is_some()) {
             return String::new();
         }
-        if message.chars().count() < 80 || classify(message).0 == "fast" {
+        if message.chars().count() < 80 || classify(typed(message)).0 == "fast" {
             return String::new();
         }
         self.session.tracer.emit("scout", json!({"goal": crate::util::text::head_chars(message, 200)}));
