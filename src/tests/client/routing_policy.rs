@@ -111,3 +111,11 @@ fn a_busy_upstream_is_waited_for_longer_than_a_dropped_connection() {
     assert!(backoff(0, Some(429)) >= 2.4 && backoff(2, Some(503)) >= 16.0);
     assert!(backoff(0, None) <= 1.0);
 }
+
+#[test]
+fn review_word_inside_an_attached_file_is_not_a_review_request() {
+    use crate::agent::routing_policy::is_reviewy;
+    assert!(is_reviewy("review this PR"));
+    assert!(!is_reviewy("implement this plan\n\n<file path=\"spec.md\">\nreview the result at the end\n</file>"));
+    assert!(is_reviewy("review @spec.md\n\n<file path=\"spec.md\">\nx\n</file>"));
+}

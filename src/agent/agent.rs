@@ -12,7 +12,7 @@ use crate::agent::review_fix;
 use crate::agent::review_fix_verify::verify_fix;
 use crate::agent::review_pipeline::{run_review_pipeline, Finding, PipelineEvent};
 use crate::agent::root::pick_root;
-use crate::agent::routing_policy::{classify, effort, keep_cached_model, length_hint, one_agent, reviewy};
+use crate::agent::routing_policy::{classify, effort, keep_cached_model, length_hint, one_agent, is_reviewy};
 use crate::agent::scope::{is_broad, SWEEP, SWEEP_CHECKPOINT};
 use crate::agent::session::Session;
 use crate::agent::skills::match_skills;
@@ -446,7 +446,7 @@ impl Agent {
         self.pipeline_answer.clear();
         self.fix_run = false;
         self.fix_brief.clear();
-        if !self.shown.is_empty() && !reviewy().is_match(message) && review_fix::asks_for_fix(message) {
+        if !self.shown.is_empty() && !is_reviewy(message) && review_fix::asks_for_fix(message) {
             // "fix them" after a review: those findings, with everything the review learned
             let picked = review_fix::chosen(message, &self.shown);
             if !picked.is_empty() {
@@ -456,11 +456,11 @@ impl Agent {
                 notice(&tx, format!("Fixing {} finding(s) from the last review: advisor first, then the fix, then an independent check", picked.len()));
             }
         }
-        let alone = reviewy().is_match(message) && one_agent().is_match(message);
+        let alone = is_reviewy(message) && one_agent().is_match(message);
         if alone {
             notice(&tx, "Reviewing with one agent, as asked: no parallel reviewers");
         }
-        if cfg.review_pipeline && cfg.model_role == "default" && reviewy().is_match(message) && !alone {
+        if cfg.review_pipeline && cfg.model_role == "default" && is_reviewy(message) && !alone {
             let mut results = String::new();
             let (ptx, mut prx) = tokio::sync::mpsc::unbounded_channel::<PipelineEvent>();
             {
@@ -574,7 +574,7 @@ impl Agent {
         self.over_noted = false;
         self.read_only = !wants;
         self.wants_change = wants;
-        self.is_review = reviewy().is_match(message);
+        self.is_review = is_reviewy(message);
         self.usage_base = self.spent(); // budget is per request
         self.review_sec = 0.0;
         self.tier = "default".into();
@@ -924,7 +924,7 @@ impl Agent {
         }
         self.last_answer = final_response.clone().unwrap_or_default();
         if let Some(fr) = &final_response {
-            if fr.split_whitespace().count() > LONG_ANSWER_WORDS && !reviewy().is_match(message) {
+            if fr.split_whitespace().count() > LONG_ANSWER_WORDS && !is_reviewy(message) {
                 self.long_answer = fr.split_whitespace().count();
             }
         }
