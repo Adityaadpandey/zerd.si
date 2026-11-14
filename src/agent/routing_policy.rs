@@ -23,6 +23,12 @@ pub fn reviewy() -> &'static Re {
     static R: OnceLock<Re> = OnceLock::new();
     R.get_or_init(|| lit_i(r"\b(review|audit|critique)\b"))
 }
+/// Is this a review request? Judged on what the user typed: `@spec.md` inlines the whole file after the text, and a
+/// spec that says "review" somewhere must not turn "implement this plan" into a review run.
+pub fn is_reviewy(message: &str) -> bool {
+    let typed = ["\n\n<file path=\"", "\n\n<directory path=\""].iter().filter_map(|m| message.find(m)).min().map_or(message, |i| &message[..i]);
+    reviewy().is_match(typed)
+}
 /// "review it with one single agent", "a single reviewer", "without the pipeline": the main agent reviews it itself.
 pub fn one_agent() -> &'static Re {
     static R: OnceLock<Re> = OnceLock::new();
@@ -78,7 +84,7 @@ pub fn effort(tier: &str) -> Option<&'static str> {
 
 /// One line appended to the user's message telling the model how long the answer should be.
 pub fn length_hint(request: &str, tier: &str, will_change: bool) -> String {
-    if reviewy().is_match(request) {
+    if is_reviewy(request) {
         return "Answer with at most 6 findings, each `severity path:line  what is wrong -> fix`; if there is no defect, only: No issues found.".into();
     }
     if explainy().is_match(request) && !will_change {

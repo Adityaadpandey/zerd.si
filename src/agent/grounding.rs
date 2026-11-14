@@ -1,6 +1,6 @@
 //! Deterministic hallucination check for the final answer. Every file path (and file:line) the model cites is checked
 //! against the real tree: a path that does not exist, or a line past the end of the file, is a fabricated reference.
-use crate::agent::routing_policy::reviewy;
+use crate::agent::routing_policy::is_reviewy;
 use crate::util::re::{lit, lit_i, Re};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -121,7 +121,7 @@ const SHELLISH: &[&str] = &["bash", "sh", "shell", "zsh", "console", "sql", "tex
 /// Does the request ask for a change to files? Read-only questions must not be nudged to write. "review the change i
 /// have" is a review: the word "change" there is the thing reviewed, not a verb. Only "review and fix" edits.
 pub fn wants_change(request: &str) -> bool {
-    if reviewy().is_match(request) && !fix_asked().is_match(request) {
+    if is_reviewy(request) && !fix_asked().is_match(request) {
         return false;
     }
     edit_verbs().is_match(request) && !readonly().is_match(request)
