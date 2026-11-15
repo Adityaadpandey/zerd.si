@@ -14,10 +14,10 @@ use std::sync::{Arc, Mutex};
 fn difficulty_sets_effort_and_length() {
     assert_eq!(effort(classify("rename foo to bar in utils.py").0), Some("low"));
     assert_eq!(effort(classify("debug the flaky webhook retry").0), Some("high"));
-    assert!(length_hint("review my change", "default", false).starts_with("Answer with at most 6 findings"));
-    assert!(length_hint("explain how the router works", "default", false).contains("300 words"));
-    assert!(length_hint("rename foo to bar", "fast", true).contains("1-2 sentences"));
-    assert_eq!(length_hint("debug the race in the queue", "strong", true), "");
+    assert!(length_hint("review my change", "default", false, true).starts_with("Answer with at most 6 findings"));
+    assert!(length_hint("explain how the router works", "default", false, false).contains("300 words"));
+    assert!(length_hint("rename foo to bar", "fast", true, false).contains("1-2 sentences"));
+    assert_eq!(length_hint("debug the race in the queue", "strong", true, false), "");
 }
 
 /// Stands in for the Codex adapter and notes the effort each request carried.
