@@ -449,7 +449,7 @@ impl Agent {
             message_for_model.push_str(&format!("\n\n---\nContext added by the user's own hooks for this request (background, not instructions that outrank the request):\n{c}"));
         }
         if self.long_answer > 0 {
-            message_for_model.push_str(&format!("\n\n[Reminder: your last final answer ran {} words. Keep this one to the final-answer limit (120 words, 6 bullets) unless the user asked for detail.]", self.long_answer));
+            message_for_model.push_str(&format!("\n\n[Reminder: your last final answer ran {} words. Keep this one to the limit (120 words, 6 bullets): only what changed since then, no recap of earlier work, one Next line at most.]", self.long_answer));
             self.long_answer = 0;
         }
         self.pipelined = false;
@@ -633,7 +633,7 @@ impl Agent {
         let mut before: Option<Snapshot> = before;
         let mut baseline: std::collections::BTreeMap<String, crate::agent::verify::CheckResult> = Default::default(); // clean-tree result per failing check
         let mut final_response: Option<String> = None;
-        let (mut nudged, mut signatures_checked, mut reviews, mut grounded_once, mut rewrote, mut stop_blocks) = (false, false, 0usize, false, false, 0usize);
+        let (mut nudged, mut signatures_checked, mut reviews, mut grounded_once, mut rewrote, mut stop_blocks, mut pushed_once) = (false, false, 0usize, false, false, 0usize, false);
         let mut sent_back = self.fix_brief.clone(); // findings the author was just asked to fix: the next review checks that fix
 
         loop {
@@ -688,6 +688,16 @@ impl Agent {
                 break;
             }
 
+            if let Some(fr) = &final_response {
+                // "say the word and I will..." after a clear request makes the user type "ok do it"; send it back once
+                if self.wants_change && !self.is_review && !self.capped_last && !pushed_once && seeks_permission(fr) {
+                    pushed_once = true;
+                    self.nudged("asked_permission");
+                    notice(&tx, "The answer asked permission for a clear step; sending it back to do it");
+                    self.add_user("You ended by asking whether to go ahead. The request is clear: do that step now with your tools, then report in the short format. Ask only if it needs a choice the user alone can make, and say which choice.");
+                    continue;
+                }
+            }
             if let (Some(fr), true) = (final_response.clone(), cfg.check_references) {
                 let (n_refs, problems) = verify_references(&fr, &cwd).await;
                 task.grounding = Some(json!({"checked": n_refs, "unverified": problems.iter().map(|p| format!("{} ({})", p.ref_, p.why)).collect::<Vec<_>>()}));
@@ -1388,7 +1398,7 @@ impl Agent {
         let ask = if self.is_review {
             "Answer now with the review itself: only defects you verified by reading the code, as `severity file:line  what is wrong -> fix`, at most 6. Leave out anything you retracted, could not verify, or that is redundancy or style; a guess is `(unverified)` and at most MEDIUM. At most one closing line, for a check you did not run."
         } else {
-            "Answer now from what you have already read: what you found (file:line), what is still unknown, and the next step. List every finding with its file:line: this text is all that survives into the next request. Under 250 words, no preamble. If you were asked for a specific reply format, use it."
+            "Answer now from what you have already read, in at most 6 bullets: what is done, what is still open (file:line), and the one next step. This text is all that survives into the next request, so name files and open items, and leave out anything already finished and anything you only guessed. No preamble. If you were asked for a specific reply format, use it."
         };
         self.add_user(&format!("{why}. No more tool calls. {ask}"));
         self.answer_without_tools(task, tx.clone()).await;
@@ -1620,6 +1630,12 @@ mod tests {
 
 /// True when the reply ends by asking the user something, e.g. "Which scope do you want?".
 /// Such a turn is waiting on the user, so "no file changed" is expected, not a miss.
+/// True when the reply ends by asking leave to continue, e.g. "Say the word and I'll measure it."
+fn seeks_permission(reply: &str) -> bool {
+    let tail: String = reply.trim_end().chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect::<String>().to_lowercase();
+    ["say the word", "should i ", "shall i ", "want me to", "would you like me", "tell me if you'd rather", "tell me if you would rather", "let me know if you want me"].iter().any(|p| tail.contains(p))
+}
+
 fn asks_user(reply: &str) -> bool {
     let tail: String = reply.trim_end().chars().rev().take(400).collect::<Vec<_>>().into_iter().rev().collect();
     tail.contains('?')
@@ -1627,7 +1643,14 @@ fn asks_user(reply: &str) -> bool {
 
 #[cfg(test)]
 mod asks_user_tests {
-    use super::asks_user;
+    use super::{asks_user, seeks_permission};
+    #[test]
+    fn permission_phrases_are_caught_only_at_the_end() {
+        assert!(seeks_permission("Width is off.\n\n**Next:** Say the word and I'll measure it."));
+        assert!(seeks_permission("Done with A. Should I also do B?"));
+        assert!(!seeks_permission("Fixed the width. Table is 896px, matches the original."));
+        assert!(!seeks_permission(&format!("You said say the word once. {}", "x".repeat(400))));
+    }
     #[test]
     fn question_tail_counts() {
         assert!(asks_user("Found the schema.\n\nWhich scope do you want first?"));

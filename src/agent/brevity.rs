@@ -6,7 +6,7 @@ use crate::util::text::squash;
 pub const HOLD_CHARS: usize = 1500;
 const LINE_CHARS: usize = 140;
 /// A final answer past this (outside reviews) earns the model a reminder on the next request.
-pub const LONG_ANSWER_WORDS: usize = 250;
+pub const LONG_ANSWER_WORDS: usize = 150;
 
 /// First meaningful line of text that came before a tool call, trimmed to one short line.
 /// Example: '- Working notes:\n- a.ts:3 ...' -> 'Working notes:'
