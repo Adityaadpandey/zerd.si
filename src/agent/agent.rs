@@ -1496,7 +1496,17 @@ impl Agent {
         if !text.is_empty() && (text.contains("[ ]") || text.contains("[~]")) && text != self.todos_reminded {
             self.todos_reminded = text.clone();
             // the list is only as current as the last `todos set`: say so, or a list nobody ticked reads as ten open steps
-            self.add_user(&format!("Task list as last set (old tool results were cleared). Steps you already finished but did not tick are still shown open: tick them with `todos` first, then carry on with the rest.\n{text}"));
+            // what was edited is the best hint for which open steps are really finished
+            let mut files: Vec<String> = vec![];
+            for e in self.session.tracer.snapshot().iter().filter(|e| e["event"] == "tool_call" && matches!(e["tool"].as_str(), Some("edit" | "write_file"))) {
+                if let Some(t) = e["target"].as_str() {
+                    if !files.iter().any(|f| f == t) {
+                        files.push(t.to_string());
+                    }
+                }
+            }
+            let edited = if files.is_empty() { String::new() } else { format!("\nFiles you edited so far: {}. A step that these files already cover is done.", files.iter().take(12).cloned().collect::<Vec<_>>().join(", ")) };
+            self.add_user(&format!("Task list as last set (old tool results were cleared). Steps you already finished but did not tick are still shown open: tick them with `todos` first, then carry on with the rest.{edited}\n{text}"));
         }
     }
 
