@@ -101,7 +101,7 @@ pub async fn verify_references(text: &str, cwd: &Path) -> (usize, Vec<Problem>) 
 
 pub fn correction_prompt(problems: &[Problem]) -> String {
     let rows = problems.iter().take(15).map(|p| format!("- {}: {}", p.ref_, p.why)).collect::<Vec<_>>().join("\n");
-    format!("Automatic check: these references in your last answer do not exist:\n{rows}\n\nRe-check each with your tools (grep/read_file) and correct it, or remove the claim. Do not guess a replacement. Reply with the corrected answer only.")
+    format!("Automatic check: these references in your last answer do not exist:\n{rows}\n\nRe-check each with your tools (grep/read_file) and correct it, or remove the claim. A file that lives on a website you fetched is not a workspace file: name it as remote (its URL) instead of citing it as a path. Do not guess a replacement. Reply with the corrected answer only.")
 }
 
 fn edit_verbs() -> &'static Re {
