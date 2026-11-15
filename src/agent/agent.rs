@@ -415,9 +415,13 @@ impl Agent {
             }));
         }
         self.last_request = message.into();
+        // The small model reads the whole request first and says what job it is. Words are only the fallback for when it
+        // is down, because "we review submissions" inside a pasted job post is not a request to review code.
+        let oriented = self.orient(message).await;
+        let reviewing = oriented.as_ref().map_or_else(|| is_reviewy(ask), |o| o.intent == "review");
         let forced = std::mem::take(&mut self.forced_skills); // set by a typed /skill-name, for this request only
         let mut matched = forced.clone();
-        matched.extend(match_skills(&self.session.skills, ask, 4).into_iter().filter(|p| !forced.iter().any(|f| f.name == p.name)));
+        matched.extend(match_skills(&self.session.skills, ask, 4).into_iter().filter(|p| !forced.iter().any(|f| f.name == p.name) && (reviewing || p.name != "code-review")));
         // a playbook already in the conversation is named, not pasted again
         let playbooks: Vec<_> = matched.iter().filter(|p| !self.playbooks_sent.contains(&p.name)).cloned().collect();
         let again: Vec<String> = matched.iter().filter(|p| self.playbooks_sent.contains(&p.name)).map(|p| p.name.clone()).collect();
@@ -447,7 +451,7 @@ impl Agent {
         self.pipeline_answer.clear();
         self.fix_run = false;
         self.fix_brief.clear();
-        if !self.shown.is_empty() && !is_reviewy(ask) && review_fix::asks_for_fix(ask) {
+        if !self.shown.is_empty() && !reviewing && review_fix::asks_for_fix(ask) {
             // "fix them" after a review: those findings, with everything the review learned
             let picked = review_fix::chosen(ask, &self.shown);
             if !picked.is_empty() {
@@ -457,11 +461,11 @@ impl Agent {
                 notice(&tx, format!("Fixing {} finding(s) from the last review: advisor first, then the fix, then an independent check", picked.len()));
             }
         }
-        let alone = is_reviewy(ask) && one_agent().is_match(ask);
+        let alone = reviewing && one_agent().is_match(ask);
         if alone {
             notice(&tx, "Reviewing with one agent, as asked: no parallel reviewers");
         }
-        if cfg.review_pipeline && cfg.model_role == "default" && is_reviewy(ask) && !alone {
+        if cfg.review_pipeline && cfg.model_role == "default" && reviewing && !alone {
             let mut results = String::new();
             let (ptx, mut prx) = tokio::sync::mpsc::unbounded_channel::<PipelineEvent>();
             {
@@ -523,7 +527,6 @@ impl Agent {
             }
         }
         self.tidy_if_cache_went_cold(&tx).await;
-        let oriented = self.orient(message).await;
         let wants = oriented.as_ref().map_or_else(|| self.orient_down || wants_change(ask), |o| o.intent == "change"); // both models failed to read it: no read-only cap, the main model decides
         let difficulty: &str = oriented.as_ref().map_or_else(|| classify(ask).0, |o| o.tier);
         if let Some(o) = &oriented {
@@ -544,7 +547,7 @@ impl Agent {
         self.touches = if wants { oriented.as_ref().map(|o| o.touches.clone()).unwrap_or_default() } else { String::new() };
         self.docs_nudged = false;
         self.session.client.set_auto_effort(effort(difficulty));
-        let hint = length_hint(ask, difficulty, wants);
+        let hint = length_hint(ask, difficulty, wants, reviewing);
         if !hint.is_empty() {
             message_for_model.push_str(&format!("\n\n[{hint}]"));
         }
@@ -575,7 +578,7 @@ impl Agent {
         self.over_noted = false;
         self.read_only = !wants;
         self.wants_change = wants;
-        self.is_review = is_reviewy(ask);
+        self.is_review = reviewing;
         self.usage_base = self.spent(); // budget is per request
         self.review_sec = 0.0;
         self.tier = "default".into();
@@ -925,7 +928,7 @@ impl Agent {
         }
         self.last_answer = final_response.clone().unwrap_or_default();
         if let Some(fr) = &final_response {
-            if fr.split_whitespace().count() > LONG_ANSWER_WORDS && !is_reviewy(ask) {
+            if fr.split_whitespace().count() > LONG_ANSWER_WORDS && !self.is_review {
                 self.long_answer = fr.split_whitespace().count();
             }
         }

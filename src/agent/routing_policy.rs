@@ -95,8 +95,8 @@ pub fn effort(tier: &str) -> Option<&'static str> {
 }
 
 /// One line appended to the user's message telling the model how long the answer should be.
-pub fn length_hint(request: &str, tier: &str, will_change: bool) -> String {
-    if is_reviewy(request) {
+pub fn length_hint(request: &str, tier: &str, will_change: bool, reviewing: bool) -> String {
+    if reviewing {
         return "Answer with at most 6 findings, each `severity path:line  what is wrong -> fix`; if there is no defect, only: No issues found.".into();
     }
     if explainy().is_match(request) && !will_change {
