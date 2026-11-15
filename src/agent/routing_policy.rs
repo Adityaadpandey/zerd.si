@@ -27,7 +27,16 @@ pub fn reviewy() -> &'static Re {
 /// hard task? one agent?) must read this and not the full message: a spec that says "review" somewhere must not turn
 /// "implement this plan" into a review run.
 pub fn typed(message: &str) -> &str {
-    ["\n\n<file path=\"", "\n\n<directory path=\""].iter().filter_map(|m| message.find(m)).min().map_or(message, |i| &message[..i])
+    let msg = ["\n\n<file path=\"", "\n\n<directory path=\""].iter().filter_map(|m| message.find(m)).min().map_or(message, |i| &message[..i]);
+    // A big paste has no marker, but the person's own words are one short block next to it: "review this:" before the
+    // paste, or "make a plan to build this" after it. Judging the whole text lets "we review submissions" inside a
+    // pasted job post start a code review. Short first block means ask-then-paste; otherwise the ask is the last block.
+    let blocks: Vec<&str> = msg.split("\n\n").map(str::trim).filter(|b| !b.is_empty()).collect();
+    if msg.chars().count() < 600 || blocks.len() < 2 {
+        return msg;
+    }
+    let (first, last) = (blocks[0], blocks[blocks.len() - 1]);
+    if first.chars().count() < 200 { first } else { last }
 }
 pub fn is_reviewy(message: &str) -> bool {
     reviewy().is_match(typed(message))

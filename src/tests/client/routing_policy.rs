@@ -127,3 +127,12 @@ fn attached_files_do_not_steer_routing() {
     assert_eq!(typed(m), "add a button");
     assert_eq!(classify(typed(m)).0, "default");
 }
+
+#[test]
+fn a_pasted_job_post_that_says_review_is_not_a_review_request() {
+    use crate::agent::routing_policy::{is_reviewy, typed};
+    let post = format!("# hiring challenge\n## How we judge\nWe review submissions on a rolling basis and read your code. {}", "More text. ".repeat(60));
+    assert!(!is_reviewy(&format!("{post}\n\n\n\n\nmake a plan to build this now")));
+    assert_eq!(typed(&format!("{post}\n\nmake a plan to build this now")), "make a plan to build this now");
+    assert!(is_reviewy(&format!("review this brief:\n\n{post}")));
+}
