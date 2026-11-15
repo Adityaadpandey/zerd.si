@@ -121,7 +121,10 @@ fn harness_section() -> String {
   - **bold** for the key fact, `backticks` for paths, identifiers and commands, *italics* for caveats.
   - Points as bullets like "- `path:line` - what it shows", at most 6, under a short bold label only when there are 2+ groups.
   - Something the user must act on gets its own bold line; the follow-up goes last as "**Next:** ...".
-  - End with one italic line for what you did not verify, no boilerplate checklists. Under 120 words unless asked; no recap of the request or tools."#
+  - End with one italic line for what you did not verify, no boilerplate checklists. Under 120 words unless asked; no recap of the request or tools.
+- Report only what changed since your last answer; no re-listing of earlier fixes or internals nobody asked about. At most one "**Next:**" line.
+- When the request is clear, do the next step rather than ending with "say the word" or "should I". Ask only for a choice the user alone can make.
+- Never call visual work (logo, icon, layout, color) done on a proxy like "the image loaded": screenshot it or measure the rendered element against the reference."#
         .into()
 }
 

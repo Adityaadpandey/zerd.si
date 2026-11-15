@@ -27,7 +27,9 @@ fn system_prompt_stays_lean() {
     // sub-agent" lines went in (about 170 tokens that pay for themselves in fewer wasted turns); still far below the ~3000
     // this guard was written against. 2500 since the six execution rules (build instead of proposing, decide routine things
     // alone, tested slices, real verification, a final report) went in for every model, about 270 tokens.
-    assert!(estimate_tokens(&prompt) < 2500, "{} tokens", estimate_tokens(&prompt));
+    // 2700 since three answer rules went in (report only what changed, act instead of asking leave, no "done" on a proxy), about 110
+    // tokens that save the recap and the "ok do it" round trips.
+    assert!(estimate_tokens(&prompt) < 2700, "{} tokens", estimate_tokens(&prompt));
 }
 
 #[test]
