@@ -75,6 +75,8 @@ fn notice(tx: &Tx, m: impl Into<String>) {
 
 /// Pass a model stream through, but give up when the request's time budget is gone: a stalled connection must not
 /// outlive the budget (retries and fallbacks each wait for their own read timeout).
+/// How many times a change that is still in progress gets its token budget topped up before the hard stop.
+const MAX_BUDGET_EXTENSIONS: i64 = 2;
 const OUT_OF_TIME: &str = "Time budget exhausted while waiting for the model";
 
 pub(crate) async fn next_within(deadline: Instant, s: &mut futures::stream::BoxStream<'static, StreamEvent>) -> Option<StreamEvent> {
@@ -122,6 +124,8 @@ pub struct Agent {
     repo_map: Option<String>,
     pipeline_answer: String,
     budget_warned: bool,
+    /// how many times this request's token budget was topped up instead of cut off (see `agentic_loop`)
+    budget_extensions: i64,
     uncached_streak: usize,
     usage_base: i64,
     review_sec: f64,
@@ -252,6 +256,7 @@ impl Agent {
             repo_map: None,
             pipeline_answer: String::new(),
             budget_warned: false,
+            budget_extensions: 0,
             uncached_streak: 0,
             usage_base: 0,
             review_sec: 0.0,
@@ -567,6 +572,7 @@ impl Agent {
         self.escalated = false;
         self.budget_hit = false;
         self.budget_warned = false;
+        self.budget_extensions = 0;
         self.overflow_retried = false;
         self.calls_used = 0;
         self.calls_warned = false;
@@ -1035,11 +1041,25 @@ impl Agent {
                 self.usage_base += u.prompt_tokens - u.cached_tokens + u.completion_tokens;
             }
             let used = self.spent() - self.usage_base;
-            let budget = cfg.max_total_tokens;
+            let mut budget = cfg.max_total_tokens * (1 + self.budget_extensions);
+            if used > budget && self.edited && !self.read_only && self.budget_extensions < MAX_BUDGET_EXTENSIONS {
+                // Mid-change, a text-only stop leaves half-applied edits and makes the user type "continue".
+                // Fold the context down and give the same budget again; the hard stop is still (1 + extensions) x budget.
+                // Example: a 300k budget runs as 300k, then 600k, then 900k, and only then wraps up.
+                self.budget_extensions += 1;
+                budget = cfg.max_total_tokens * (1 + self.budget_extensions);
+                self.budget_warned = false;
+                notice(&tx, format!("Token budget topped up ({} of {MAX_BUDGET_EXTENSIONS}): folding the context and carrying on with the change", self.budget_extensions));
+                if !self.compact(true).await {
+                    self.session.context_manager.lock().unwrap().prune_tool_outputs();
+                }
+                self.add_user("The token budget was topped up so the change can finish. Carry on from where you stopped: do not recap earlier work, and keep to the remaining steps.");
+            }
             if used > budget {
                 self.wrap_up(task, &tx, &format!("Token budget reached ({budget})"), "Token budget is spent").await;
                 return;
             }
+            // the warning is for the last stretch of the whole allowance, so it counts from the topped-up budget
             if used as f64 > 0.7 * budget as f64 && !self.budget_warned {
                 self.budget_warned = true;
                 self.add_user("Budget check: about 70% of the token budget is used. Stop broad searching. Jot short working notes (candidate, file:line, checked or not; no severity), since old tool results get cleared. If the task asks for an output file, write it now. Read only what you must, then answer or make the change.");

@@ -108,6 +108,21 @@ async fn token_budget_ends_with_a_final_answer_not_a_bare_failure() {
     assert!(reqs.last().unwrap().last().unwrap()["content"].as_str().unwrap().starts_with("Token budget is spent"));
 }
 
+#[tokio::test]
+async fn a_change_in_progress_gets_its_budget_topped_up_instead_of_a_text_only_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    // one token of budget: the write below blows it, yet the run must carry on and finish the change
+    let mut a = scripted(
+        cfg(tmp.path(), json!({"pi_mode": false, "auto_verify": false, "max_total_tokens": 1})),
+        vec![call_as("write_file", json!({"path": "a.txt", "content": "x"}), "c0"), text("summary"), text("summary"), text("summary"), call_as("write_file", json!({"path": "b.txt", "content": "y"}), "c1"), text("All done.")],
+    )
+    .await;
+    let evs = run(&mut a, "create a.txt and b.txt").await;
+    assert!(tmp.path().join("a.txt").exists());
+    let notices = format!("{evs:?}");
+    assert!(notices.contains("topped up"), "{notices}");
+}
+
 #[test]
 fn anthropic_marks_history_for_caching() {
     let msgs = vec![json!({"role": "system", "content": "sys"}), json!({"role": "user", "content": "hi"})];
