@@ -179,7 +179,7 @@ fn tool_guidelines_section(tools: &[Arc<dyn Tool>]) -> Option<String> {
     }
     if !subs.is_empty() {
         let rows = subs.iter().map(|t| format!("- **{}**: {}", t.name(), crate::util::text::head_chars(t.description().split(". ").next().unwrap_or(""), 140))).collect::<Vec<_>>().join("\n");
-        sections.push(format!("# Delegation\n\nUse sub-agents for broad exploration or independent investigation, not for a lookup one call can answer. Each has seen none of this conversation: give it the goal, what you already know, the exact names and paths, and the answer shape you want back (\"file:line per claim, under 200 words\"). Never delegate the understanding (\"based on your findings, fix it\"): read the report, decide, then act. Run independent ones in parallel, never let two edit the same files, and check their reports like any evidence.\n\nSub-agents:\n{rows}"));
+        sections.push(format!("# Delegation\n\nUse sub-agents for broad exploration or independent investigation, not for a lookup one call can answer. Each has seen none of this conversation: give it the goal, what you already know, the exact names and paths, and the answer shape you want back (\"file:line per claim, under 200 words\"). Sub-agents only read files: they have no shell and no network, so fetch URLs and run commands yourself. Never delegate the understanding (\"based on your findings, fix it\"): read the report, decide, then act. Run independent ones in parallel, never let two edit the same files, and check their reports like any evidence.\n\nSub-agents:\n{rows}"));
     }
     (!sections.is_empty()).then(|| sections.join("\n\n"))
 }
