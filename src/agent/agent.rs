@@ -1017,11 +1017,22 @@ impl Agent {
             "review_sec": r1(self.review_sec),
         });
         {
-            // nothing is sent unless the user ran `zerd telemetry on`; see util/telemetry.rs for the exact record
+            // nothing is collected unless the user opted in; see util/telemetry.rs for the exact record
             let cfg = self.config.get();
-            let intent = if self.is_review { "review" } else if self.wants_change { "change" } else { "ask" };
-            let failed = task.verification.iter().filter(|c| c["ok"] != true).count();
-            crate::util::telemetry::send_if_enabled(&crate::config::loader::get_data_dir(), &events, &cfg.model.name, intent, self.estimate, self.calls_used, (task.verification.len(), failed));
+            let extra = json!({
+                "model": cfg.model.name,
+                "intent": if self.is_review { "review" } else if self.wants_change { "change" } else { "ask" },
+                "estimate": self.estimate,
+                "rounds": self.calls_used,
+                "checks": task.verification.len(),
+                "checks_failed": task.verification.iter().filter(|c| c["ok"] != true).count(),
+                "window": self.session.context_manager.lock().unwrap().context_window,
+                "top_ups": self.budget_extensions,
+                "approval": cfg.approval.value(),
+                "pi_mode": cfg.pi_mode as i64,
+                "sub_agent": cfg.sub_agent as i64,
+            });
+            crate::util::telemetry::send_if_enabled(&crate::config::loader::get_data_dir(), &events, extra);
         }
         self.task = Some(task);
         emit(&tx, AgentEvent::AgentEnd { response: final_response, report });
