@@ -196,7 +196,10 @@ async fn run(args: Args) -> i32 {
     let scripted = one_shot || args.json_mode || args.rpc_mode;
     config.auto_challenge = args.challenge_mode || !scripted;
     config.auto_learn = !scripted;
-    config.verify_on_demand = !scripted;
+    if !scripted && config.verify_wait_sec.is_none() {
+        // someone is sitting at the prompt: a slow typecheck should not hold it, so after this long it moves to the background
+        config.verify_wait_sec = Some(30);
+    }
     if let Some(a) = args.approval.as_deref().and_then(ApprovalPolicy::parse) {
         config.approval = a;
     } else if one_shot && config.approval == ApprovalPolicy::OnRequest {

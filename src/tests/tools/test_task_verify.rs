@@ -274,3 +274,34 @@ async fn a_check_that_was_already_failing_is_not_repaired_and_the_run_is_not_cal
     assert_eq!(rep["checks"][0]["preexisting"], true);
     assert_eq!(request_count(&a), 2); // no repair round trip
 }
+
+#[tokio::test]
+async fn a_slow_check_moves_to_the_background_and_its_failure_reaches_the_next_request() {
+    // the check takes 2s but the prompt only waits 1s: the request answers first, the failure follows it
+    let d = repo();
+    let cfg = cfg_for(d.path(), |c| {
+        c.verify_commands = vec!["sleep 2; echo boom; false".into()];
+        c.verify_wait_sec = Some(1);
+    });
+    let mut a = scripted(cfg, vec![write("a.txt"), text("done"), text("looking at it")]).await;
+    let started = std::time::Instant::now();
+    let rep = report(&go(&mut a, "go").await);
+    assert!(started.elapsed().as_secs_f64() < 1.9, "the request waited for the slow check");
+    assert_eq!(rep["status"], "unverified", "{rep}");
+    assert!(rep["status_note"].as_str().unwrap().contains("background"), "{rep}");
+    tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+    go(&mut a, "what happened").await;
+    let told = last_content(&a, 2);
+    assert!(told.contains("finished after you had answered") && told.contains("boom"), "{told}");
+}
+
+#[tokio::test]
+async fn a_change_nothing_can_check_is_sent_back_once_for_proof() {
+    let d = repo();
+    let cfg = cfg_for(d.path(), |_| {});
+    let mut a = scripted(cfg, vec![write("001_init.sql"), text("done"), text("no database here to run it against")]).await;
+    let rep = report(&go(&mut a, "add the migration file").await);
+    assert!(last_content(&a, 2).contains("no automatic check"), "{}", last_content(&a, 2));
+    assert_eq!(request_count(&a), 3); // asked once, then the answer stands
+    assert_eq!(rep["status"], "unverified", "{rep}");
+}

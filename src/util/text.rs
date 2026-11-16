@@ -21,6 +21,12 @@ pub fn head_chars(text: &str, n: usize) -> String {
     text.chars().take(n).collect()
 }
 
+/// The last `n` characters, for command output where the error is at the end.
+pub fn tail_chars(text: &str, n: usize) -> String {
+    let skip = text.chars().count().saturating_sub(n);
+    text.chars().skip(skip).collect()
+}
+
 /// Python's `str.split_whitespace` joined back with single spaces.
 pub fn squash(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")

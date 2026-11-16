@@ -308,8 +308,9 @@ pub struct Config {
     pub check_references: bool,
     pub require_read_before_edit: bool,
     pub auto_verify: bool,
-    /// Interactive runs skip the checks after a task; the user starts them with /verify
-    pub verify_on_demand: bool,
+    /// How long a request waits for its checks before handing the prompt back. Checks still running after that
+    /// finish in the background and report when done. None waits for them all, which is what a scripted run wants.
+    pub verify_wait_sec: Option<u64>,
     pub max_repairs: usize,
     pub verify_timeout_sec: u64,
     pub max_total_tokens: i64,
@@ -400,7 +401,7 @@ impl Default for Config {
             check_references: true,
             require_read_before_edit: true,
             auto_verify: true,
-            verify_on_demand: false,
+            verify_wait_sec: None,
             max_repairs: 2,
             verify_timeout_sec: 600,
             max_total_tokens: 300_000,
