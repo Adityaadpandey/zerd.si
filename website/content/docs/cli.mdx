@@ -81,6 +81,16 @@ See [Memory and undo](/docs/memory-and-undo).
 
 Reads zerd's own trace files and reports, per model, failed calls, retries, speed, cache hit rate, bad tool calls and how often the loop had to step in. It covers the last 7 days by default.
 
+### `zerd telemetry [on|off|status]`
+
+Telemetry is off unless you turn it on. With `zerd telemetry on`, zerd sends one small record after each finished request so the harness can be tuned on more than one person's runs.
+
+Sent: a random id for the install, the zerd version, OS, model name, how the request ended, and counts (rounds, seconds, token totals, files changed, calls and errors per built-in tool, how often the loop stepped in).
+
+Never sent: what you typed, file names, commands, error text or code. MCP tools and your own tools are counted as "other" so their names stay with you.
+
+`zerd telemetry off` stops it and deletes the id. `DO_NOT_TRACK=1` or `ZERD_TELEMETRY=0` also switches it off.
+
 ### `zerd probe-models [--json <file>]`
 
 Sends a tiny request to every model your gateway key can list and prints status and latency. It uses the gateway's `API_KEY` and `BASE_URL`.
