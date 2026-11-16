@@ -228,6 +228,17 @@ async fn run_setup(cfg: &Config, first_run: bool) -> Option<bool> {
             println!("{}", paint(&format!("  approval: {} (change with /approval, saved in {})", values[i], get_system_config_path().display()), MUTED));
         }
     }
+    // Opt-in, so Enter means no unless they already said yes before.
+    let data_dir = crate::config::loader::get_data_dir();
+    let sharing = crate::util::telemetry::enabled(&data_dir);
+    println!("\n{}", paint("zerd can send anonymous usage numbers (rounds, timings, token totals, which built-in tools failed) so it gets", MUTED));
+    println!("{}", paint("better for everyone. Never what you type, file names, commands or code. Details: `zerd telemetry status`.", MUTED));
+    let choices: Vec<String> = vec!["Yes, share anonymous usage numbers".into(), "No thanks".into()];
+    if let Some(i) = menu("Help improve zerd?", &choices, if sharing { 0 } else { 1 }) {
+        if crate::util::telemetry::set_enabled(&data_dir, i == 0).is_ok() {
+            println!("{}", paint(&format!("  telemetry: {} (change with `zerd telemetry on` or `off`)", if i == 0 { "on" } else { "off" }), MUTED));
+        }
+    }
     println!(
         "\n{}\n  {}  {}\n  {}  {}\n  {}",
         bold_paint("✓ You're set.", MINT),
