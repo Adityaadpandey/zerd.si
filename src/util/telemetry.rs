@@ -185,4 +185,27 @@ mod tests {
             assert!(!text.contains(private), "{private} leaked into {text}");
         }
     }
+
+    #[tokio::test]
+    async fn an_opted_in_install_posts_the_record_and_one_that_did_not_opt_in_sends_nothing() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        unsafe { std::env::set_var("ZERD_TELEMETRY_URL", format!("http://{}/api/telemetry", server.local_addr().unwrap())) };
+        let events = vec![json!({"event": "task_start", "request": "hello"}), json!({"event": "task_end", "status": "verified", "sec": 3.0, "changed": []})];
+        let d = tempfile::tempdir().unwrap();
+        send_if_enabled(d.path(), &events, "some/model", "ask", 0, 1, (0, 0));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(300), server.accept()).await.is_err(), "sent without consent");
+        set_enabled(d.path(), true).unwrap();
+        send_if_enabled(d.path(), &events, "some/model", "ask", 0, 1, (0, 0));
+        let (mut sock, _) = tokio::time::timeout(std::time::Duration::from_secs(5), server.accept()).await.expect("nothing was sent").unwrap();
+        let mut got = String::new();
+        let mut buf = [0u8; 4096];
+        while !got.contains("\"status\":\"verified\"") {
+            let n = sock.read(&mut buf).await.unwrap();
+            assert!(n > 0, "connection closed early: {got}");
+            got.push_str(&String::from_utf8_lossy(&buf[..n]));
+        }
+        let _ = sock.write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n").await;
+        assert!(got.starts_with("POST /api/telemetry") && got.contains("\"model\":\"some/model\"") && !got.contains("hello"), "{got}");
+    }
 }
