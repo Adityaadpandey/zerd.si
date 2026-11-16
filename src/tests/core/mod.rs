@@ -25,6 +25,7 @@ pub(crate) fn cfg(dir: &Path, extra: Value) -> Config {
     let mut map = serde_json::Map::new();
     map.insert("cwd".into(), json!(dir));
     map.insert("approval".into(), json!("auto"));
+    map.insert("auto_orient".into(), json!(false)); // scripted models answer in order: an extra first call to read the request would eat a turn
     if let Some(o) = extra.as_object() {
         for (k, v) in o {
             map.insert(k.clone(), v.clone());
