@@ -105,7 +105,7 @@ async fn token_budget_ends_with_a_final_answer_not_a_bare_failure() {
     let evs = run(&mut a, "go").await;
     assert!(!evs.iter().any(|e| matches!(e, AgentEvent::AgentError { .. })), "{evs:?}");
     let Some(AgentEvent::AgentEnd { response, report }) = evs.last() else { panic!("run did not end with AgentEnd: {evs:?}") };
-    assert!(response.as_deref().unwrap_or("").contains("Found X") && report["status"] == "unverified", "{response:?} {report}");
+    assert!(response.as_deref().unwrap_or("").contains("Found X") && report["status"] == "done_no_changes" && report["status_note"] == "token budget reached", "{response:?} {report}"); // nothing changed, so it is an early answer, not an unverified change
     let reqs = a.session.client.requests.lock().unwrap();
     assert!(reqs.last().unwrap().last().unwrap()["content"].as_str().unwrap().starts_with("Token budget is spent"));
 }

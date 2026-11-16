@@ -1018,3 +1018,20 @@ async fn a_claude_code_style_call_still_runs() {
     assert!(completed(&events)[0].1.success);
     assert!(tool_texts(&requests(&agent)[1])[0].contains("hello there"));
 }
+
+#[tokio::test]
+async fn a_budget_stop_before_any_change_is_a_failure_for_a_change_and_an_early_answer_for_a_question() {
+    // both runs spend the whole budget on one lookup and change nothing
+    let status_for = |message: &'static str| async move {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        let cfg = cfg(tmp.path(), json!({"max_total_tokens": 1000}));
+        let ev = with_usage(call_as("list_dir", json!({"path": "."}), "l"), TokenUsage { prompt_tokens: 5000, completion_tokens: 10, total_tokens: 5010, ..Default::default() });
+        let mut agent = scripted(cfg, vec![ev, text("ran out before I could finish")]).await;
+        let events = run(&mut agent, message).await;
+        let Some(AgentEvent::AgentEnd { report, .. }) = events.iter().find(|e| matches!(e, AgentEvent::AgentEnd { .. })) else { panic!("no AgentEnd") };
+        (report["status"].as_str().unwrap().to_string(), report["status_note"].as_str().unwrap().to_string())
+    };
+    assert_eq!(status_for("fix the crash in the login handler").await, ("failed".to_string(), "token budget reached".to_string()));
+    assert_eq!(status_for("how is this repo laid out?").await, ("done_no_changes".to_string(), "token budget reached".to_string()));
+}

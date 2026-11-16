@@ -93,7 +93,7 @@ fn unverified_why(note: &str) -> &'static str {
     if note.contains("background") {
         "Checks are still running in the background; the result is printed here when they finish."
     } else if note.contains("budget") {
-        "Stopped on the token budget before the work was checked."
+        "Stopped on the token budget, so the change may be incomplete."
     } else if note.contains("only docs") {
         "Only docs changed, so there was nothing to run."
     } else if note.contains("already failing") {
