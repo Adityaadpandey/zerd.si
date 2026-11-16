@@ -186,7 +186,8 @@ impl ContextManager {
     pub fn limit(&self) -> f64 {
         let cfg = self.config.get();
         if cfg.pi_mode {
-            return self.context_window as f64 - 16_384.0; // pi: compact only when the next reply would no longer fit
+            // pi: compact when the next reply would no longer fit, but a big window is still no reason to carry 240k of history
+            return (self.context_window as f64 - 16_384.0).min(cfg.compact_at_tokens as f64);
         }
         // a 1M window doesn't mean 800k tokens of history is a good idea: cap with compact_at_tokens
         (self.context_window as f64 * 0.8).min(cfg.compact_at_tokens as f64)

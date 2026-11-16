@@ -225,7 +225,7 @@ async fn pruning_waits_until_the_context_is_three_quarters_full() {
             cm.add_assistant_message(Some(""), Some(grep_call(&format!("c{i}"))), None, None);
             cm.add_tool_result(&format!("c{i}"), &"word ".repeat(20_000));
         }
-        cm.set_latest_usage(TokenUsage { prompt_tokens: 90_000, completion_tokens: 10, total_tokens: 90_010, ..Default::default() }); // under prune_at_tokens: left alone
+        cm.set_latest_usage(TokenUsage { prompt_tokens: 60_000, completion_tokens: 10, total_tokens: 60_010, ..Default::default() }); // under three quarters of the limit: left alone
     }
     agent.prune(false, false);
     assert!(!agent.session.context_manager.lock().unwrap().messages.iter().any(|m| m.pruned));
