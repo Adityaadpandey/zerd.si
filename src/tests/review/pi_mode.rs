@@ -41,11 +41,14 @@ fn anything_set_by_hand_wins_over_pi_defaults() {
 }
 
 #[test]
-fn pi_mode_compacts_only_near_the_window_and_still_clears_old_results() {
+fn compaction_starts_at_seventy_percent_of_the_models_window_and_old_results_are_still_cleared() {
     let dir = tempfile::tempdir().unwrap();
     let mut cm = ContextManager::new(ConfigHandle::new(cfg(dir.path(), json!({}))), String::new());
     cm.context_window = 100_000;
-    assert_eq!(cm.limit(), (100_000 - 16_384) as f64);
+    assert_eq!(cm.limit(), 70_000.0);
+    cm.context_window = 1_000_000;
+    assert_eq!(cm.limit(), 700_000.0); // a bigger model gets a bigger share, not a fixed number
+    cm.context_window = 100_000;
     let read = |id: &str| vec![json!({"id": id, "type": "function", "function": {"name": "read_file", "arguments": "{}"}})];
     cm.add_assistant_message(Some(""), Some(read("a")), None, None);
     cm.add_tool_result("a", &"x".repeat(400_000));
