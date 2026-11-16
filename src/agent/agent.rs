@@ -1016,6 +1016,13 @@ impl Agent {
             "verify_sec": r1(task.verification.iter().map(|c| c["seconds"].as_f64().unwrap_or(0.0)).sum()),
             "review_sec": r1(self.review_sec),
         });
+        {
+            // nothing is sent unless the user ran `zerd telemetry on`; see util/telemetry.rs for the exact record
+            let cfg = self.config.get();
+            let intent = if self.is_review { "review" } else if self.wants_change { "change" } else { "ask" };
+            let failed = task.verification.iter().filter(|c| c["ok"] != true).count();
+            crate::util::telemetry::send_if_enabled(&crate::config::loader::get_data_dir(), &events, &cfg.model.name, intent, self.estimate, self.calls_used, (task.verification.len(), failed));
+        }
         self.task = Some(task);
         emit(&tx, AgentEvent::AgentEnd { response: final_response, report });
     }

@@ -124,6 +124,9 @@ fn main() {
     if raw.get(1).map(String::as_str) == Some("insights") {
         std::process::exit(util::insights::main(raw.into_iter().skip(2).collect()));
     }
+    if raw.get(1).map(String::as_str) == Some("telemetry") {
+        std::process::exit(util::telemetry::main(raw.into_iter().skip(2).collect()));
+    }
     if raw.get(1).map(String::as_str) == Some("probe-models") {
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
         std::process::exit(rt.block_on(client::probe::main(raw.into_iter().skip(2).collect())));
