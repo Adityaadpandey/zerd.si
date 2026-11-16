@@ -184,3 +184,12 @@ fn parallel_tasks_is_not_offered_outside_git_or_inside_workers() {
     off.enable_parallel_tasks = false;
     assert!(registry(off).get("parallel_tasks").is_none());
 }
+
+#[test]
+fn workers_may_run_commands_only_when_the_sandbox_holds_them_or_the_user_already_allows_it() {
+    use crate::config::ApprovalPolicy as P;
+    use crate::tools::builtin::parallel_tasks::worker_policy;
+    assert!(worker_policy(P::OnRequest, true) == P::Auto); // sandboxed: nothing to ask about, and nobody to ask
+    assert!(worker_policy(P::OnRequest, false) == P::AutoEdit); // no sandbox: edits only, as before
+    assert!(worker_policy(P::Auto, false) == P::Auto && worker_policy(P::Yolo, false) == P::Yolo);
+}

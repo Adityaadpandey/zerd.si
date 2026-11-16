@@ -5,6 +5,16 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::any::Any;
 
+/// What a parallel worker may do without asking. Example: the user works in the default ask-first mode on a Mac
+/// (sandbox on) -> workers get `Auto`; the same on a machine with no sandbox -> `AutoEdit`, edits only.
+pub fn worker_policy(parent: ApprovalPolicy, sandboxed: bool) -> ApprovalPolicy {
+    match parent {
+        ApprovalPolicy::Auto | ApprovalPolicy::Yolo => parent,
+        _ if sandboxed => ApprovalPolicy::Auto,
+        _ => ApprovalPolicy::AutoEdit,
+    }
+}
+
 pub struct ParallelTasksTool {
     config: ConfigHandle,
 }
@@ -66,9 +76,13 @@ impl Tool for ParallelTasksTool {
             Ok(n) => n,
             Err(GraphError(e)) => return ToolResult::error(format!("Invalid task graph: {e}")),
         };
-        // the user approved this plan, so workers may edit inside their own worktree; no recursion
+        // The user approved this plan, so workers may edit inside their own worktree; no recursion.
+        // A worker has nobody to ask, so a command that needs a yes used to end it on the spot: four of six workers
+        // died on things like `ls node_modules/next; echo ---`. With the OS sandbox on, a command can only write inside
+        // the worker's own throwaway checkout, so it may run without asking. Without the sandbox, commands keep the
+        // edits-only rule unless the user already runs everything on auto.
         let mut cfg = (*self.config.get()).clone();
-        cfg.approval = ApprovalPolicy::AutoEdit;
+        cfg.approval = worker_policy(cfg.approval, crate::safety::sandbox::mode(&cfg) == "on");
         cfg.enable_parallel_tasks = false;
         cfg.subagents = vec![];
         cfg.auto_review = false;
