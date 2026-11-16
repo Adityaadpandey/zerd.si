@@ -563,17 +563,34 @@ async fn a_budget_stop_runs_the_checks_and_reports_a_broken_tree() {
 }
 
 #[tokio::test]
-async fn a_run_that_cannot_ask_for_approval_stops_at_the_first_refusal() {
+async fn a_run_that_cannot_ask_for_approval_skips_that_step_and_finishes_the_rest() {
+    // one write needs a yes nobody can give; the lookup after it still runs and the answer lists what is waiting
     let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "hi").unwrap();
     let cfg = cfg(tmp.path(), json!({"approval": "on-request", "auto_verify": false}));
-    let mut turns: Vec<_> = (0..5).map(|i| call_as("write_file", json!({"path": "n.txt", "content": "x"}), &format!("w{i}"))).collect();
-    turns.push(text("done"));
+    let turns = vec![call_as("write_file", json!({"path": "n.txt", "content": "x"}), "w0"), call_as("read_file", json!({"path": "a.txt"}), "r0"), text("a.txt says hi; n.txt was not written")];
     let mut agent = scripted(cfg, turns).await; // no confirmation callback: single-run mode
     let events = run(&mut agent, "go").await;
-    let errs: Vec<&String> = events.iter().filter_map(|e| if let AgentEvent::AgentError { error } = e { Some(error) } else { None }).collect();
-    assert!(!errs.is_empty() && errs[0].contains("--approval auto-edit"), "{errs:?}");
-    assert_eq!(requests(&agent).len(), 1); // one model call, not a retry loop
+    assert!(!events.iter().any(|e| matches!(e, AgentEvent::AgentError { .. })), "{events:?}");
+    let sent = last_content(&requests(&agent)[1]);
+    assert!(sent.contains("nobody can give it in this run") && !sent.contains("user refused"), "{sent}");
+    let Some(AgentEvent::AgentEnd { report, .. }) = events.iter().find(|e| matches!(e, AgentEvent::AgentEnd { .. })) else { panic!("no AgentEnd") };
+    assert_eq!(report["needs_approval"], json!(["write_file n.txt"]));
+    assert!(events.iter().any(|e| matches!(e, AgentEvent::Notice(m) if m.contains("--approval auto"))), "{events:?}");
     assert!(!tmp.path().join("n.txt").exists());
+}
+
+#[tokio::test]
+async fn a_run_that_keeps_needing_approval_stops_after_three_and_names_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = cfg(tmp.path(), json!({"approval": "on-request", "auto_verify": false}));
+    let mut turns: Vec<_> = (0..6).map(|i| call_as("write_file", json!({"path": format!("n{i}.txt"), "content": "x"}), &format!("w{i}"))).collect();
+    turns.push(text("done"));
+    let mut agent = scripted(cfg, turns).await;
+    let events = run(&mut agent, "go").await;
+    let errs: Vec<&String> = events.iter().filter_map(|e| if let AgentEvent::AgentError { error } = e { Some(error) } else { None }).collect();
+    assert!(!errs.is_empty() && errs[0].contains("--approval auto-edit") && errs[0].contains("write_file n2.txt"), "{errs:?}");
+    assert_eq!(requests(&agent).len(), 3); // three tries, not a retry loop to the budget
 }
 
 #[tokio::test]

@@ -185,10 +185,10 @@ async fn shell_always_remembers_the_command_not_all_edits() {
 async fn non_interactive_message_says_how_to_proceed() {
     let tmp = tempfile::tempdir().unwrap();
     let a = run_agent(tmp.path(), None, vec![write("a.py", "1"), text("ok")]).await;
-    // the run stops at the first refusal and says how to proceed
-    let errors: Vec<&String> = a.events.iter().filter_map(|e| if let AgentEvent::AgentError { error } = e { Some(error) } else { None }).collect();
-    assert!(!errors.is_empty() && errors[0].contains("--approval auto-edit"), "{errors:?}");
-    assert_eq!(a.requests.len(), 1);
+    // the step is skipped, the run still answers, and zerd itself says how to allow it next time
+    let notes: Vec<&String> = a.events.iter().filter_map(|e| if let AgentEvent::Notice(m) = e { Some(m) } else { None }).collect();
+    assert!(notes.iter().any(|m| m.contains("write_file a.py") && m.contains("--approval auto")), "{notes:?}");
+    assert_eq!(a.requests.len(), 2);
 }
 
 #[test]

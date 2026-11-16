@@ -106,6 +106,8 @@ fn notice(tx: &Tx, m: impl Into<String>) {
 /// outlive the budget (retries and fallbacks each wait for their own read timeout).
 /// How many times a change that is still in progress gets its token budget topped up before the hard stop.
 const MAX_BUDGET_EXTENSIONS: i64 = 2;
+/// How many actions may be skipped for want of an approver before the run gives up.
+const MAX_UNASKED: usize = 3;
 const OUT_OF_TIME: &str = "Time budget exhausted while waiting for the model";
 
 pub(crate) async fn next_within(deadline: Instant, s: &mut futures::stream::BoxStream<'static, StreamEvent>) -> Option<StreamEvent> {
@@ -176,7 +178,8 @@ pub struct Agent {
     pub checkpoints: Vec<Value>,
     root_hint: Option<PathBuf>,
     scout_error: String,
-    no_approver: bool,
+    /// Actions this request wanted but could not get approved because nobody was there to ask (a script, a worker).
+    unasked: Vec<String>,
     pub forced_skills: Vec<crate::agent::skills::Skill>,
     /// Names whose text is in the conversation; cleared on compaction.
     playbooks_sent: std::collections::HashSet<String>,
@@ -312,7 +315,7 @@ impl Agent {
             checkpoints: vec![],
             root_hint: None,
             scout_error: String::new(),
-            no_approver: false,
+            unasked: vec![],
             forced_skills: vec![],
             playbooks_sent: Default::default(),
             last_request: String::new(),
@@ -573,7 +576,7 @@ impl Agent {
             }
         }
         self.scout_error.clear();
-        self.no_approver = false;
+        self.unasked.clear();
         let scout = self.scout(message).await;
         if !self.scout_error.is_empty() {
             notice(&tx, format!("Scout failed, continuing without it: {}", crate::util::text::head_chars(&self.scout_error, 160)));
@@ -1113,6 +1116,13 @@ impl Agent {
             });
             crate::util::telemetry::send_if_enabled(&crate::config::loader::get_data_dir(), &events, extra);
         }
+        if !self.unasked.is_empty() {
+            // said by zerd itself, so the user hears it even when the model's answer forgets to
+            report["needs_approval"] = json!(self.unasked);
+            if task.status != TaskStatus::Failed {
+                notice(&tx, format!("Skipped {} step(s) that needed approval with nobody to ask: {}. Re-run with --approval auto to allow them.", self.unasked.len(), self.unasked.join("; ")));
+            }
+        }
         self.task = Some(task);
         emit(&tx, AgentEvent::AgentEnd { response: final_response, report });
     }
@@ -1467,10 +1477,11 @@ impl Agent {
                 self.add_user(&format!("[the user added, while you were working:] {note}"));
                 notice(&tx, format!("steering received: {}", crate::util::text::head_chars(&note, 80)));
             }
-            if self.no_approver {
-                // nobody can answer the approval prompt in this run, so retrying cannot succeed: stop instead of burning the budget
+            if self.unasked.len() >= MAX_UNASKED {
+                // one refusal is a step to skip; three means the task cannot be done without the approval, and
+                // going on would only burn the budget on more of the same
                 self.failed = true;
-                emit(&tx, AgentEvent::AgentError { error: "Stopped: this change needs approval and the run cannot ask. Re-run with --approval auto-edit (edits) or --approval auto (edits and commands), or start zerd interactively.".into() });
+                emit(&tx, AgentEvent::AgentError { error: format!("Stopped: this task needs approval and the run cannot ask. Waiting on: {}. Re-run with --approval auto-edit (edits) or --approval auto (edits and commands), or start zerd interactively.", self.unasked.join("; ")) });
                 return;
             }
 
@@ -1800,8 +1811,12 @@ impl Agent {
                 self.green_checks.clear();
             }
             for (tc, result) in batch.iter().zip(results) {
-                self.no_approver = self.no_approver || result.flag("no_approver");
                 let cmd = tc.arguments.get("command").and_then(|c| c.as_str()).unwrap_or("").trim().to_string();
+                if result.flag("no_approver") {
+                    // remembered as the user would type it: "`npm run db:migrate`" or "write_file db/schema.sql"
+                    let what = if cmd.is_empty() { format!("{} {}", tc.name, tc.arguments.get("path").and_then(|p| p.as_str()).unwrap_or("")) } else { format!("`{}`", crate::util::text::head_chars(&cmd, 120)) };
+                    self.unasked.push(what.trim().to_string());
+                }
                 if tc.name == "shell" && check_command().is_match(&cmd) {
                     // ponytail: matched on the exact command text, so a failing `npm test -- -t foo` is not cleared by a
                     // later plain `npm test`. That costs one extra nudge at most; compare by tool and target if it gets noisy.
