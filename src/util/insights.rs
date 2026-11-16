@@ -44,6 +44,7 @@ fn pct(part: i64, whole: i64) -> String {
 /// The report for sessions given as lists of trace events (one list per session, in file order).
 pub fn summarize(sessions: &[Vec<Value>]) -> Value {
     let (mut models, mut tools, mut tasks): (BTreeMap<String, Model>, BTreeMap<String, ToolStat>, BTreeMap<String, i64>) = Default::default();
+    let mut helpers: BTreeMap<String, i64> = Default::default();
     for events in sessions {
         // a tool call belongs to the model that asked for it: the last one that answered in this session
         let mut current = String::new();
@@ -90,11 +91,13 @@ pub fn summarize(sessions: &[Vec<Value>]) -> Value {
                 "task_end" => {
                     // "unverified" alone hides three different stories, so its reason is part of the row
                     let status = e["status"].as_str().unwrap_or("?");
-                    let key = match e["note"].as_str().filter(|n| status == "unverified" && !n.is_empty()) {
+                    // a failure's note is the raw error text, different every time, so only the fixed reasons are shown
+                    let key = match e["note"].as_str().filter(|n| !n.is_empty() && (status != "failed" || *n == "token budget reached")) {
                         Some(n) => format!("{status} ({n})"),
                         None => status.to_string(),
                     };
-                    *tasks.entry(key).or_default() += 1
+                    // zerd's own reviewers and challengers are counted apart: their early stops are not the user's requests
+                    *(if e["sub"] == true { &mut helpers } else { &mut tasks }).entry(key).or_default() += 1
                 }
                 _ => {}
             }
@@ -116,7 +119,7 @@ pub fn summarize(sessions: &[Vec<Value>]) -> Value {
                    "top_errors": why.iter().take(3).map(|(w, n)| json!({"error": w, "count": n})).collect::<Vec<_>>()})
         })
         .collect();
-    json!({"sessions": sessions.len(), "tasks": tasks, "models": models, "tools": tools})
+    json!({"sessions": sessions.len(), "tasks": tasks, "helpers": helpers, "models": models, "tools": tools})
 }
 
 /// Things worth acting on, in plain words. Small samples are skipped: three calls prove nothing.
@@ -155,6 +158,9 @@ pub fn render(report: &Value, days: u64) -> String {
     let mut out = vec![format!("zerd insights: {} session(s) in the last {days} day(s)", report["sessions"])];
     if let Some(t) = report["tasks"].as_object().filter(|t| !t.is_empty()) {
         out.push(format!("\nRequests by outcome: {}", t.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ")));
+    }
+    if let Some(t) = report["helpers"].as_object().filter(|t| !t.is_empty()) {
+        out.push(format!("Reviewer and sub-agent runs: {}", t.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ")));
     }
     out.push(format!("\n{:<38} {:>6} {:>6} {:>6} {:>7} {:>7} {:>9} {:>9}  {}", "MODEL", "calls", "failed", "retry", "avg s", "cached", "tool err", "bad call", "loop stepped in"));
     for m in report["models"].as_array().into_iter().flatten() {

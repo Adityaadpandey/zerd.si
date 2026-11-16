@@ -28,7 +28,7 @@ const BUILTIN: &[&str] = &[
 
 /// Why a request ended, when the reason is one of zerd's own fixed phrases. A failure note can quote an error
 /// message with paths in it, so anything not on this list is sent as "other".
-const STOPS: &[&str] = &["", "token budget reached", "no verification commands", "a check was already failing before the change", "checks after budget stop", "agent loop aborted"];
+const STOPS: &[&str] = &["", "token budget reached", "no verification commands", "a check was already failing before the change", "checks after budget stop", "agent loop aborted", "checks still running in the background", "only docs changed, nothing to run"];
 
 /// Stop collecting when this much is waiting: someone who is offline for a month should not grow a file forever.
 const MAX_WAITING_BYTES: u64 = 256 * 1024;

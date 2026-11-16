@@ -677,6 +677,7 @@ impl Agent {
         }
 
         let mut task = TaskState::new(message, self.session.tracer.clone(), cfg.max_seconds, cfg.max_repairs);
+        task.sub_agent = cfg.sub_agent;
         let registry = self.session.tool_registry.clone();
         let advisor_on = registry.get_tools().iter().any(|t| t.name() == "advisor");
         if advisor_on {
@@ -748,8 +749,14 @@ impl Agent {
                     notice(&tx, format!("Stopped on the budget and the tree fails {}; the change is incomplete", bad.command));
                     task.transition(TaskStatus::Verifying, "checks after budget stop");
                     task.transition(TaskStatus::VerificationFailed, &bad.command);
-                } else {
+                } else if !task.changed_files.is_empty() {
                     task.transition(TaskStatus::Unverified, "token budget reached");
+                } else if self.wants_change && !self.read_only && !cfg.sub_agent {
+                    // asked for a change and ran out before making one: calling that "unverified" hid a quarter of a week's cut-offs
+                    task.transition(TaskStatus::Failed, "token budget reached");
+                } else {
+                    // a question or a review that had to answer early: nothing changed, and the answer says it was cut short
+                    task.transition(TaskStatus::DoneNoChanges, "token budget reached");
                 }
                 break;
             }

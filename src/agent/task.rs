@@ -59,6 +59,8 @@ pub struct TaskState {
     pub repairs: usize,
     pub changed_files: Vec<String>,
     pub history: Vec<(f64, String, String)>,
+    /// A reviewer, challenger or other helper zerd started itself, not something the user typed.
+    pub sub_agent: bool,
     /// One entry per check run.
     pub verification: Vec<Value>,
     /// {verdict, findings} from the independent reviewer.
@@ -84,6 +86,7 @@ impl TaskState {
             repairs: 0,
             changed_files: vec![],
             history: vec![],
+            sub_agent: false,
             verification: vec![],
             review: None,
             grounding: None,
@@ -114,7 +117,7 @@ impl TaskState {
             self.repairs += 1;
         }
         if self.status.terminal() {
-            self.tracer.emit("task_end", json!({"task": self.id, "status": to.value(), "note": note, "repairs": self.repairs, "sec": at, "changed": self.changed_files}));
+            self.tracer.emit("task_end", json!({"task": self.id, "status": to.value(), "note": note, "sub": self.sub_agent, "repairs": self.repairs, "sec": at, "changed": self.changed_files}));
         }
     }
 
