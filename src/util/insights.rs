@@ -87,7 +87,15 @@ pub fn summarize(sessions: &[Vec<Value>]) -> Value {
                     }
                 }
                 "nudge" if !current.is_empty() => *models.entry(current.clone()).or_default().nudges.entry(e["kind"].as_str().unwrap_or("?").to_string()).or_default() += 1,
-                "task_end" => *tasks.entry(e["status"].as_str().unwrap_or("?").to_string()).or_default() += 1,
+                "task_end" => {
+                    // "unverified" alone hides three different stories, so its reason is part of the row
+                    let status = e["status"].as_str().unwrap_or("?");
+                    let key = match e["note"].as_str().filter(|n| status == "unverified" && !n.is_empty()) {
+                        Some(n) => format!("{status} ({n})"),
+                        None => status.to_string(),
+                    };
+                    *tasks.entry(key).or_default() += 1
+                }
                 _ => {}
             }
         }

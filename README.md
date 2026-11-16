@@ -143,6 +143,7 @@ stateDiagram-v2
     verifying --> verified: checks pass
     verifying --> repairing: checks or review failed
     verifying --> unverified: a check was already failing
+    verifying --> unverified: checks still running in the background
     verifying --> verification_failed: still failing after repairs
     repairing --> verifying: fix applied
     repairing --> failed
@@ -307,6 +308,12 @@ The part that matters: when a check fails, zerd **swaps in the pre-run copy of y
 the agent's files back.** An error that was already there is reported as "was already failing before your change; leaving it
 alone" and the agent is not sent to "fix" what it didn't break. A run with a pre-existing failure ends `unverified`, not
 `verified`. Failures that are the agent's go back as a repair request (up to 2 rounds), then escalate to the strong model.
+
+Two cases used to slip through and no longer do. A slow check does not hold your prompt: after `verify_wait_sec` (30s when
+you are at the prompt) it carries on in the background, prints `✓ background checks passed` or the failure when it is done,
+and a failure is handed to the model with your next message, so "fix it" is enough. And when no check covers the files at
+all (a `.sql` migration, a TypeScript file in a project with no `tsc` installed), zerd asks the model once to run something
+that proves the change. A passing `python3 client.py`, `npx tsx db/migrate.ts` or `curl` after the last edit counts.
 
 ```mermaid
 flowchart TB
@@ -632,7 +639,7 @@ zerd behaves a little differently when you talk to it and when a script does, be
 
 | | Interactive | One-shot / `--json` / `--rpc` |
 |---|---|---|
-| Checks on changed files | when you run `/verify` | **automatically** after edits, with repair rounds |
+| Checks on changed files | **automatically** after edits; a check still running after 30s (`verify_wait_sec`) finishes in the background and prints its result while you carry on | **automatically** after edits, waits for all of them |
 | Independent diff review | when you ask ("review my changes"); set `auto_review = true` to review every change | same |
 | Challenger on risky requests | on | off (`--challenge` turns it on) |
 | Learning from corrections | on | off |

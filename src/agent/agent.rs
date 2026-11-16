@@ -53,6 +53,14 @@ fn check_command() -> &'static Re {
     R.get_or_init(|| lit(r"\b(tsc|eslint|pytest|vitest|jest|mypy|ruff|py_compile|cargo (test|check|build|clippy)|go (test|vet|build)|(npm|pnpm|yarn|bun) (run [\w:-]+|test\b)|node --test|make( |$))"))
 }
 
+/// A command that runs the code rather than only checking it: `python3 retry_lab/client.py`, `node -e "..."`,
+/// `npx tsx db/migrate.ts`, `curl localhost:3000/api/chat`. When it passes after the last edit it counts as proof,
+/// but a failure is not held against the answer the way a failing test is: these are often experiments.
+fn proof_command() -> &'static Re {
+    static R: OnceLock<Re> = OnceLock::new();
+    R.get_or_init(|| lit(r"\b(python3? (-c|\S+\.py)|node (-e|--check|\S+\.[cm]?js)|(tsx|ts-node|deno run|deno check|deno test) \S|bun \S+\.[cm]?[jt]sx?|(ba)?sh (-n )?\S+\.sh|php -l|ruby (-c|\S+\.rb)|curl )"))
+}
+
 fn text_call() -> &'static Re {
     static R: OnceLock<Re> = OnceLock::new();
     R.get_or_init(|| {
@@ -74,6 +82,20 @@ pub(crate) fn not_overflow() -> &'static Re {
 
 fn emit(tx: &Tx, ev: AgentEvent) {
     let _ = tx.send(ev);
+}
+
+/// What the user reads when background checks finish, e.g. "✓ background checks passed: cargo check -q" or the
+/// failing command with the end of its output.
+fn late_check_report(results: &[crate::agent::verify::CheckResult]) -> String {
+    let bad: Vec<_> = results.iter().filter(|r| !r.ok).collect();
+    if bad.is_empty() {
+        return format!("  ✓ background checks passed: {}", results.iter().map(|r| r.command.as_str()).collect::<Vec<_>>().join(" && "));
+    }
+    let mut out = String::new();
+    for r in bad {
+        out.push_str(&format!("  ✗ background check failed: {}\n{}\n", r.command, crate::util::text::tail_chars(&r.output_tail, 1200)));
+    }
+    out + "  Your next message will carry this to the model, so \"fix it\" is enough."
 }
 
 fn notice(tx: &Tx, m: impl Into<String>) {
@@ -143,6 +165,10 @@ pub struct Agent {
     /// harness has no check of its own for this kind of project.
     red_checks: Vec<String>,
     green_checks: Vec<String>,
+    /// Checks that were still running when the last request handed the prompt back. `late_stop` cancels them when a
+    /// newer change makes their answer stale; `late_checks` holds their results until the model can be told.
+    late_stop: Option<tokio::task::AbortHandle>,
+    late_checks: Arc<Mutex<Vec<crate::agent::verify::CheckResult>>>,
     review_sec: f64,
     pub undo_info: Option<Value>,
     long_answer: usize,
@@ -278,6 +304,8 @@ impl Agent {
             cache_seen: false,
             red_checks: vec![],
             green_checks: vec![],
+            late_stop: None,
+            late_checks: Default::default(),
             review_sec: 0.0,
             undo_info: None,
             long_answer: 0,
@@ -671,7 +699,7 @@ impl Agent {
         let mut before: Option<Snapshot> = before;
         let mut baseline: std::collections::BTreeMap<String, crate::agent::verify::CheckResult> = Default::default(); // clean-tree result per failing check
         let mut final_response: Option<String> = None;
-        let (mut nudged, mut signatures_checked, mut reviews, mut grounded_once, mut rewrote, mut stop_blocks, mut pushed_once, mut red_pushed) = (false, false, 0usize, false, false, 0usize, false, false);
+        let (mut nudged, mut signatures_checked, mut reviews, mut grounded_once, mut rewrote, mut stop_blocks, mut pushed_once, mut red_pushed, mut proof_asked) = (false, false, 0usize, false, false, 0usize, false, false, false);
         let mut sent_back = self.fix_brief.clone(); // findings the author was just asked to fix: the next review checks that fix
 
         loop {
@@ -808,8 +836,7 @@ impl Agent {
                 ));
                 continue;
             }
-            // interactive: checks run when the user asks (/verify); a fix run still needs them to judge its own work
-            let checks = if cfg.verify_on_demand && !self.fix_run { vec![] } else { select_checks(&cfg, &task.changed_files) };
+            let checks = select_checks(&cfg, &task.changed_files);
             // outside git we can't tell what changed, so only verify when asked to
             if task.changed_files.is_empty() && before.is_some() {
                 if !nudged && final_response.is_some() && self.wants_change && !asks_user(final_response.as_deref().unwrap_or("")) && (has_file_code(final_response.as_deref().unwrap_or("")) || self.touches == "code") {
@@ -830,19 +857,60 @@ impl Agent {
                 task.transition(TaskStatus::DoneNoChanges, "");
                 break;
             }
+            let only_docs = task.changed_files.iter().all(|f| DOC_SUFFIX.iter().any(|s| f.to_lowercase().ends_with(s)));
+            if checks.is_empty() && cfg.auto_verify && !only_docs && self.green_checks.is_empty() && !proof_asked && self.wants_change && !self.is_review && !self.capped_last && !cfg.sub_agent && !task.expired() {
+                // nothing of ours can check these files (a .ts file with no tsc installed, a .sql migration, a shell
+                // script), so the one who wrote the change shows it works, once
+                proof_asked = true;
+                self.nudged("no_check");
+                notice(&tx, "No automatic check covers these files; asking for one run that proves the change");
+                self.add_user(&format!(
+                    "zerd has no automatic check for {}. Before you finish, run one command that proves the change works: run the script, import the module, call the function, hit the endpoint, or a typecheck or syntax check if that is all there is. Then give the short answer again with that command and its result in one line. If nothing can be run here, say why in one sentence instead.",
+                    task.changed_files.iter().take(4).cloned().collect::<Vec<_>>().join(", ")
+                ));
+                continue;
+            }
             let mut failures = vec![];
+            let mut checks_running = false;
             if !checks.is_empty() {
                 task.transition(TaskStatus::Verifying, &format!("{} check(s)", checks.len()));
                 notice(&tx, format!("Verifying: {}", checks.iter().map(|c| c.0.clone()).collect::<Vec<_>>().join(" && ")));
-                let cfg_r = &cfg;
-                let futs = checks.iter().map(|(cmd, sub)| {
-                    let dir = cwd.join(sub);
-                    async move { run_check(cmd, &dir, cfg_r).await }
+                if let Some(old) = self.late_stop.take() {
+                    old.abort(); // still checking the previous change: this run checks the newer tree
+                }
+                // the checks run as their own task so they can outlive this request when they are slow
+                let (jobs, dir, cfg_c) = (checks.clone(), cwd.clone(), cfg.clone());
+                let mut work = tokio::spawn(async move {
+                    let cfg_r = &cfg_c;
+                    futures::future::join_all(jobs.iter().map(|(cmd, sub)| {
+                        let d = dir.join(sub);
+                        async move { run_check(cmd, &d, cfg_r).await }
+                    }))
+                    .await
                 });
-                let results = self.unless_steered(futures::future::join_all(futs)).await;
-                let Some(results) = results else {
-                    self.back_to_work(&mut task, &tx);
-                    continue;
+                // a fix run judges its own work by the checks, so it always waits for them
+                let wait = if self.fix_run { None } else { cfg.verify_wait_sec.map(Duration::from_secs) };
+                let waited = self
+                    .unless_steered(async {
+                        match wait {
+                            Some(d) => tokio::time::timeout(d, &mut work).await.ok(),
+                            None => Some((&mut work).await),
+                        }
+                    })
+                    .await;
+                let results = match waited {
+                    None => {
+                        work.abort();
+                        self.back_to_work(&mut task, &tx);
+                        continue;
+                    }
+                    Some(None) => {
+                        notice(&tx, format!("Checks are taking longer than {}s; they carry on in the background and report when done", wait.map_or(0, |d| d.as_secs())));
+                        self.finish_checks_later(work);
+                        checks_running = true;
+                        vec![]
+                    }
+                    Some(Some(done)) => done.unwrap_or_default(),
                 };
                 task.verification = results.iter().map(|r| r.to_value()).collect();
                 let failing: Vec<_> = results.into_iter().zip(checks.iter()).filter(|(r, _)| !r.ok).map(|(r, (_, sub))| (r, cwd.join(sub))).collect();
@@ -960,7 +1028,9 @@ impl Agent {
                 }
             }
 
-            if task.verification.iter().any(|v| v["preexisting"] == true) {
+            if checks_running {
+                task.transition(TaskStatus::Unverified, "checks still running in the background");
+            } else if task.verification.iter().any(|v| v["preexisting"] == true) {
                 task.transition(TaskStatus::Unverified, "a check was already failing before the change");
             } else if !checks.is_empty() {
                 task.transition(TaskStatus::Verified, "");
@@ -968,6 +1038,8 @@ impl Agent {
                 // no check of our own for this project, but the model ran its own after the last edit and they passed
                 task.transition(TaskStatus::Verifying, "checks the model ran");
                 task.transition(TaskStatus::Verified, &self.green_checks.join("; "));
+            } else if only_docs {
+                task.transition(TaskStatus::Unverified, "only docs changed, nothing to run");
             } else {
                 task.transition(TaskStatus::Unverified, "no verification commands");
             }
@@ -1040,6 +1112,20 @@ impl Agent {
 
     /// Runs a check or a review, but drops it the moment the user types a steering note, so the note is worked on now
     /// instead of after a minutes-long typecheck. Returns None when dropped.
+    /// Slow checks keep running after the request has answered. When they finish the user is told straight away, and
+    /// a failure waits in `late_checks` for the model's next turn.
+    fn finish_checks_later(&mut self, work: tokio::task::JoinHandle<Vec<crate::agent::verify::CheckResult>>) {
+        self.late_stop = Some(work.abort_handle());
+        let waiting = self.late_checks.clone();
+        tokio::spawn(async move {
+            let Ok(results) = work.await else { return }; // cancelled: a newer change is being checked instead
+            if let Some(ui) = crate::ui::prompt::asker() {
+                ui.say(late_check_report(&results));
+            }
+            *waiting.lock().unwrap() = results;
+        });
+    }
+
     async fn unless_steered<F: std::future::Future>(&self, work: F) -> Option<F::Output> {
         tokio::pin!(work);
         loop {
@@ -1150,6 +1236,14 @@ impl Agent {
                 let state = if job.returncode() == Some(0) { "finished".to_string() } else { format!("failed (exit {})", job.returncode().unwrap_or(-1)) };
                 notice(&tx, format!("Background job {} {state} in {:.0}s: {}", job.id, job.started.elapsed().as_secs_f64(), job.command));
                 self.add_user(&format!("[background job {} `{}` {state}; last output:]\n{}", job.id, job.command, job.tail(15)));
+            }
+            let late: Vec<_> = std::mem::take(&mut *self.late_checks.lock().unwrap()).into_iter().filter(|r| !r.ok).collect();
+            if !late.is_empty() {
+                // the user was already told when they finished; the model hears it at its next turn
+                self.add_user(&format!(
+                    "[checks on your previous change finished after you had answered, and failed. They may have been failing before that change, so look before you fix:]\n{}",
+                    late.iter().map(|r| format!("`{}`\n{}", r.command, crate::util::text::tail_chars(&r.output_tail, 1500))).collect::<Vec<_>>().join("\n\n")
+                ));
             }
             for (id, name, report) in crate::tools::subagents::finished(self.config.key()) {
                 notice(&tx, format!("Background sub-agent {name} finished"));
@@ -1711,6 +1805,8 @@ impl Agent {
                     } else if !edits {
                         self.green_checks.push(cmd);
                     }
+                } else if tc.name == "shell" && result.success && !edits && proof_command().is_match(&cmd) && !self.green_checks.contains(&cmd) {
+                    self.green_checks.push(cmd);
                 }
                 out.push((tc.call_id.clone(), result.to_model_output(), !result.success));
                 emit(tx, AgentEvent::ToolCallComplete { call_id: tc.call_id.clone(), name: tc.name.clone(), result });

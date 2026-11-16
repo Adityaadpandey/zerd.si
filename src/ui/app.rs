@@ -87,6 +87,22 @@ fn copy_to_clipboard(text: &str) -> bool {
     false
 }
 
+/// One line on why a change ended unverified. "No verification commands found" used to be printed for every case,
+/// including a budget stop and checks that were simply never run.
+fn unverified_why(note: &str) -> &'static str {
+    if note.contains("background") {
+        "Checks are still running in the background; the result is printed here when they finish."
+    } else if note.contains("budget") {
+        "Stopped on the token budget before the work was checked."
+    } else if note.contains("only docs") {
+        "Only docs changed, so there was nothing to run."
+    } else if note.contains("already failing") {
+        "A check was already failing before this change, so it proves nothing about it."
+    } else {
+        "No check exists for these files, so the change was not tested. Verify rules in .zerd/config.toml add one."
+    }
+}
+
 fn home_short(p: &Path) -> String {
     let home = crate::util::platform::home_dir().unwrap_or_default().to_string_lossy().to_string();
     p.to_string_lossy().replacen(&home, "~", 1)
@@ -810,6 +826,9 @@ impl Cli {
             for c in bad {
                 uprintln!("    {} {}", paint("✗", CORAL), c["command"].as_str().unwrap_or(""));
             }
+            if status == "unverified" {
+                uprintln!("{}", paint(&format!("    {}", unverified_why(report["status_note"].as_str().unwrap_or(""))), MUTED));
+            }
             return;
         }
         if report["undo"] == true {
@@ -827,7 +846,7 @@ impl Cli {
             uprintln!("    review: {v}{}", if v == "PASS" { "" } else { " (see findings above)" });
         }
         if status == "unverified" {
-            uprintln!("{}", paint("    No verification commands found; changes were not tested.", MUTED));
+            uprintln!("{}", paint(&format!("    {}", unverified_why(report["status_note"].as_str().unwrap_or(""))), MUTED));
         }
     }
 

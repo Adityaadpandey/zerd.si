@@ -114,12 +114,13 @@ impl TaskState {
             self.repairs += 1;
         }
         if self.status.terminal() {
-            self.tracer.emit("task_end", json!({"task": self.id, "status": to.value(), "repairs": self.repairs, "sec": at, "changed": self.changed_files}));
+            self.tracer.emit("task_end", json!({"task": self.id, "status": to.value(), "note": note, "repairs": self.repairs, "sec": at, "changed": self.changed_files}));
         }
     }
 
     pub fn report(&self) -> Value {
-        json!({"task": self.id, "status": self.status.value(), "repairs": self.repairs, "changed_files": self.changed_files,
+        // status_note is why it ended this way ("token budget reached", "checks still running in the background")
+        json!({"task": self.id, "status": self.status.value(), "status_note": self.history.last().map(|h| h.2.as_str()).unwrap_or(""), "repairs": self.repairs, "changed_files": self.changed_files,
                "checks": self.verification, "review": self.review, "grounding": self.grounding})
     }
 }
