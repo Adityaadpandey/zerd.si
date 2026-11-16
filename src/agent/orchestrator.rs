@@ -172,10 +172,7 @@ impl Orchestrator {
         cfg.max_seconds = crate::tools::subagents::soft_budget(WORKER_TIMEOUT as f64); // so it reports before it is cut
         cfg.sandbox_write_extra.push(git_dir);
         let owned = if node.files.is_empty() { String::new() } else { format!("\nFiles you own: {}. Do not edit other files.", node.files.join(", ")) };
-        let prompt = format!(
-            "You are one worker in a parallel job. Overall request (for context only):\n{request}\n\nYOUR task: {}{owned}{before}\nOther workers handle the rest in separate checkouts; do only your task, keep the change small.",
-            node.goal
-        );
+        let prompt = worker_brief(request, &node.goal, &owned, before, &wt.to_string_lossy(), &self.repo.to_string_lossy());
         let key = format!("{}:{}", self.run_id, node.id);
         let say = |info: Value| {
             if let Some(p) = &self.progress {
@@ -441,5 +438,26 @@ mod tests {
         assert!(parse_graph(&json!({"tasks": [{"id": "a", "goal": "x"}, {"id": "a", "goal": "y"}]})).is_err());
         assert!(parse_graph(&json!({"tasks": [{"id": "a", "goal": "x", "deps": ["z"]}]})).is_err());
         assert!(parse_graph(&json!({"tasks": [{"id": "a", "goal": "x", "deps": ["b"]}, {"id": "b", "goal": "y", "deps": ["a"]}]})).unwrap_err().0.contains("cycle"));
+    }
+}
+
+/// What a parallel worker is told. The request and the task were written against the user's repo, so they carry
+/// its absolute paths (/Users/me/app/lib/api.ts). The worker lives in its own checkout and may not leave it: in one
+/// week 43 of 51 "outside the workspace" errors were workers reaching back for those paths. So every mention of
+/// the repo (`there`) is pointed at the worker's copy (`here`).
+fn worker_brief(request: &str, goal: &str, owned: &str, before: &str, here: &str, there: &str) -> String {
+    format!(
+        "You are one worker in a parallel job. Overall request (for context only):\n{}\n\nYOUR task: {}{owned}{before}\nOther workers handle the rest in separate checkouts; do only your task, keep the change small.\nYou work in your own checkout of the repo at {here}. Use paths relative to it; any other copy of the repo is off limits.",
+        request.replace(there, here),
+        goal.replace(there, here)
+    )
+}
+
+#[cfg(test)]
+mod brief_tests {
+    #[test]
+    fn a_worker_is_pointed_at_its_own_checkout_not_the_users_repo() {
+        let b = super::worker_brief("fix /Users/me/app/lib/api.ts", "edit /Users/me/app/lib/types.ts", "", "", "/tmp/zerd-1/api", "/Users/me/app");
+        assert!(b.contains("fix /tmp/zerd-1/api/lib/api.ts") && b.contains("edit /tmp/zerd-1/api/lib/types.ts") && !b.contains("/Users/me/app"), "{b}");
     }
 }
