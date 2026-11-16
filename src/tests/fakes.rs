@@ -56,6 +56,7 @@ pub fn config(cwd: &std::path::Path) -> Config {
     init();
     let mut c = Config::default();
     c.cwd = cwd.to_path_buf();
+    c.auto_orient = false; // scripted models answer in order: an extra first call to read the request would eat a turn
     c
 }
 

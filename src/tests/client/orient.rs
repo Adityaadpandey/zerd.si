@@ -65,6 +65,7 @@ async fn a_bug_fix_that_only_edited_a_doc_is_sent_back() {
     // Python replaced Agent._orient with a stub. Here orientation is a real call to the fast model, so the first scripted
     // reply is its answer ("this is a code change"); a fast route must exist for the agent to ask at all.
     cfg.routing.insert("fast".into(), vec!["flash".into()]);
+    cfg.auto_orient = true; // the shared test config turns it off
     let turns = vec![
         reply(r#"{"intent": "change", "tier": "default", "touches": "code"}"#),
         call("write_file", json!({"path": "NOTES.md", "content": "n"})),
@@ -76,4 +77,17 @@ async fn a_bug_fix_that_only_edited_a_doc_is_sent_back() {
     let evs = run(&mut a, "the invite link does not open, fix it please").await;
     assert!(evs.iter().any(|e| matches!(e, AgentEvent::Notice(m) if m.contains("Only documentation changed"))));
     assert!(d.join("fix.ts").exists());
+}
+
+#[tokio::test]
+async fn with_no_small_model_set_up_the_main_model_reads_the_request_itself() {
+    // nobody with a bare config got a round estimate: the step was skipped unless a [routing] table named a fast model
+    let dir = tempfile::tempdir().unwrap();
+    let mut cfg = config(dir.path());
+    cfg.auto_orient = true;
+    cfg.auto_verify = false;
+    let mut agent = scripted(cfg, vec![reply(r#"{"intent": "explain", "tier": "default", "rounds": 7}"#), text("It parses the config.")]).await;
+    let events = run(&mut agent, "explain what the loader module does").await;
+    assert_eq!(agent.session.client.requests.lock().unwrap().len(), 2, "one call to read the request, one to answer it");
+    assert!(events.iter().any(|e| matches!(e, AgentEvent::TextComplete(t) if t.contains("parses the config"))));
 }

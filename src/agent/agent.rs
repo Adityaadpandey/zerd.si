@@ -1398,8 +1398,10 @@ impl Agent {
     async fn orient(&mut self, message: &str) -> Option<Orientation> {
         self.orient_down = false;
         let cfg = self.config.get();
-        let role = if cfg.routing.contains_key("fast") { "fast" } else if cfg.routing.contains_key("summarize") { "summarize" } else { "" };
-        if !(cfg.auto_orient && !role.is_empty() && cfg.model_role == "default" && !cfg.sub_agent && message.trim().chars().count() >= 20 && !message.starts_with('/')) {
+        // With no small model set up, the main model reads the request itself. Skipping the step instead (as before)
+        // meant no round estimate and an empty calibration ledger for anyone who never wrote a [routing] table.
+        let role = if cfg.routing.contains_key("fast") { "fast" } else if cfg.routing.contains_key("summarize") { "summarize" } else { "default" };
+        if !(cfg.auto_orient && cfg.model_role == "default" && !cfg.sub_agent && message.trim().chars().count() >= 20 && !message.starts_with('/')) {
             return None;
         }
         if self.repo_map.is_none() {
