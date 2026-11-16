@@ -46,6 +46,13 @@ const REVIEW_NO_WORKERS: &str = "parallel_tasks runs coding workers that edit fi
 const CUT_CALL: &str = "Not run: your reply hit the output token limit, so this call's arguments may be truncated. Re-issue it in smaller pieces: write a long file as a short first version and grow it with edits, or split one big edit into several.";
 
 /// A tool call the model typed into its answer instead of making it (Qwen, GLM, DeepSeek and Hermes-style templates).
+/// A shell command that proves something about the code: a typecheck, a lint, a test run, a build or a project script.
+/// `npm run db:migrate` and `npx tsc --noEmit` count; `ls`, `cat` and `git status` do not.
+fn check_command() -> &'static Re {
+    static R: OnceLock<Re> = OnceLock::new();
+    R.get_or_init(|| lit(r"\b(tsc|eslint|pytest|vitest|jest|mypy|ruff|py_compile|cargo (test|check|build|clippy)|go (test|vet|build)|(npm|pnpm|yarn|bun) (run [\w:-]+|test\b)|node --test|make( |$))"))
+}
+
 fn text_call() -> &'static Re {
     static R: OnceLock<Re> = OnceLock::new();
     R.get_or_init(|| {
@@ -131,6 +138,11 @@ pub struct Agent {
     /// size of the last prompt, and whether this provider has ever served part of one from its cache (see `forgive_rewarm`)
     last_prompt: i64,
     cache_seen: bool,
+    /// Checks the model ran itself in the shell: the ones whose last run failed, and the ones that passed since the
+    /// last edit. A finished answer with a red one is sent back once; green ones count as verification when the
+    /// harness has no check of its own for this kind of project.
+    red_checks: Vec<String>,
+    green_checks: Vec<String>,
     review_sec: f64,
     pub undo_info: Option<Value>,
     long_answer: usize,
@@ -264,6 +276,8 @@ impl Agent {
             usage_base: 0,
             last_prompt: 0,
             cache_seen: false,
+            red_checks: vec![],
+            green_checks: vec![],
             review_sec: 0.0,
             undo_info: None,
             long_answer: 0,
@@ -595,6 +609,8 @@ impl Agent {
         self.budget_hit = false;
         self.budget_warned = false;
         self.budget_extensions = 0;
+        self.red_checks.clear();
+        self.green_checks.clear();
         self.overflow_retried = false;
         self.calls_used = 0;
         self.calls_warned = false;
@@ -655,7 +671,7 @@ impl Agent {
         let mut before: Option<Snapshot> = before;
         let mut baseline: std::collections::BTreeMap<String, crate::agent::verify::CheckResult> = Default::default(); // clean-tree result per failing check
         let mut final_response: Option<String> = None;
-        let (mut nudged, mut signatures_checked, mut reviews, mut grounded_once, mut rewrote, mut stop_blocks, mut pushed_once) = (false, false, 0usize, false, false, 0usize, false);
+        let (mut nudged, mut signatures_checked, mut reviews, mut grounded_once, mut rewrote, mut stop_blocks, mut pushed_once, mut red_pushed) = (false, false, 0usize, false, false, 0usize, false, false);
         let mut sent_back = self.fix_brief.clone(); // findings the author was just asked to fix: the next review checks that fix
 
         loop {
@@ -708,6 +724,18 @@ impl Agent {
                     task.transition(TaskStatus::Unverified, "token budget reached");
                 }
                 break;
+            }
+
+            if self.wants_change && !self.is_review && !self.capped_last && !red_pushed && !self.red_checks.is_empty() {
+                // "Done!" right after `npm run db:migrate` exited 1 makes the user find the failure and paste it back
+                red_pushed = true;
+                self.nudged("red_check");
+                notice(&tx, format!("The answer came while `{}` was still failing; sending it back", self.red_checks[0]));
+                self.add_user(&format!(
+                    "You ended, but the last run of these commands failed: {}. Fix the cause and run them again until they pass. If one cannot pass here (it needs a database, a key or a service you cannot reach), say so plainly in the answer: which command, what it printed, and what the user has to do.",
+                    self.red_checks.iter().map(|c| format!("`{c}`")).collect::<Vec<_>>().join(", ")
+                ));
+                continue;
             }
 
             if let Some(fr) = &final_response {
@@ -936,6 +964,10 @@ impl Agent {
                 task.transition(TaskStatus::Unverified, "a check was already failing before the change");
             } else if !checks.is_empty() {
                 task.transition(TaskStatus::Verified, "");
+            } else if !self.green_checks.is_empty() && self.red_checks.is_empty() && !task.changed_files.is_empty() {
+                // no check of our own for this project, but the model ran its own after the last edit and they passed
+                task.transition(TaskStatus::Verifying, "checks the model ran");
+                task.transition(TaskStatus::Verified, &self.green_checks.join("; "));
             } else {
                 task.transition(TaskStatus::Unverified, "no verification commands");
             }
@@ -1641,8 +1673,25 @@ impl Agent {
                 }
             });
             let results: Vec<ToolResult> = futures::future::join_all(futs).await;
+            // a pass from before an edit proves nothing about the code as it is now
+            let edits = batch.iter().any(|tc| tc.name == "edit" || tc.name == "write_file");
+            if edits {
+                self.green_checks.clear();
+            }
             for (tc, result) in batch.iter().zip(results) {
                 self.no_approver = self.no_approver || result.flag("no_approver");
+                let cmd = tc.arguments.get("command").and_then(|c| c.as_str()).unwrap_or("").trim().to_string();
+                if tc.name == "shell" && check_command().is_match(&cmd) {
+                    // ponytail: matched on the exact command text, so a failing `npm test -- -t foo` is not cleared by a
+                    // later plain `npm test`. That costs one extra nudge at most; compare by tool and target if it gets noisy.
+                    self.red_checks.retain(|c| c != &cmd);
+                    self.green_checks.retain(|c| c != &cmd);
+                    if !result.success {
+                        self.red_checks.push(cmd);
+                    } else if !edits {
+                        self.green_checks.push(cmd);
+                    }
+                }
                 out.push((tc.call_id.clone(), result.to_model_output(), !result.success));
                 emit(tx, AgentEvent::ToolCallComplete { call_id: tc.call_id.clone(), name: tc.name.clone(), result });
             }

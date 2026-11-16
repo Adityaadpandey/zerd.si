@@ -509,6 +509,35 @@ async fn a_cold_cache_on_context_already_seen_does_not_use_up_the_budget() {
 }
 
 #[tokio::test]
+async fn an_answer_given_while_its_own_check_still_fails_is_sent_back_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    git_init(tmp.path());
+    let script = vec![
+        call_as("write_file", json!({"path": "a.txt", "content": "x"}), "w"),
+        call_as("shell", json!({"command": "make no-such-target-here"}), "s"),
+        text("All done."),
+        text("`make no-such-target-here` cannot pass here: there is no Makefile."),
+    ];
+    let mut agent = scripted(cfg(tmp.path(), json!({})), script).await;
+    let events = run(&mut agent, "create a.txt and make it build").await;
+    assert!(notices(&events).iter().any(|m| m.contains("still failing")), "{:?}", notices(&events));
+    let Some(AgentEvent::AgentEnd { response, report }) = events.iter().find(|e| matches!(e, AgentEvent::AgentEnd { .. })) else { panic!("no AgentEnd") };
+    assert!(response.as_deref().unwrap_or("").contains("cannot pass here") && report["status"] == "unverified", "{response:?} {report}");
+}
+
+#[tokio::test]
+async fn checks_the_model_ran_after_its_last_edit_count_as_verification() {
+    let tmp = tempfile::tempdir().unwrap();
+    git_init(tmp.path());
+    // a .txt file has no check the harness knows, so the only proof is the command the model ran itself
+    let script = vec![call_as("write_file", json!({"path": "a.txt", "content": "x"}), "w"), call_as("shell", json!({"command": "echo cargo check"}), "s"), text("All done.")];
+    let mut agent = scripted(cfg(tmp.path(), json!({})), script).await;
+    let events = run(&mut agent, "create a.txt").await;
+    let Some(AgentEvent::AgentEnd { report, .. }) = events.iter().find(|e| matches!(e, AgentEvent::AgentEnd { .. })) else { panic!("no AgentEnd") };
+    assert_eq!(report["status"], "verified", "{report}");
+}
+
+#[tokio::test]
 async fn a_run_stopped_by_the_budget_still_reports_the_files_it_changed() {
     let tmp = tempfile::tempdir().unwrap();
     git_init(tmp.path());
