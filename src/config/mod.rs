@@ -407,12 +407,14 @@ impl Default for Config {
             tool_output_max_chars: 8_000,
             pricing: HashMap::new(),
             max_seconds: 1800.0,
-            compact_at_tokens: 200_000,
+            // Past roughly 120k a mid-sized model starts losing track of what it already did ("the width is still
+            // wrong" three requests in a row), and every call re-reads the whole pile. Folding earlier keeps it sharp.
+            compact_at_tokens: 120_000,
             read_call_budget: 0, // 0 = no cap; a read-only request runs until the model has its answer
             write_call_budget: 100,
             prune_at_tokens: 180_000,
             cache_ttl_seconds: 300,
-            idle_compact_at_tokens: 150_000,
+            idle_compact_at_tokens: 80_000, // the cache is cold after a break anyway, so that is the cheap moment to fold
             keep_recent_tokens: 40_000,
             allowed_tools: None,
             allowed_tools_implied: false,
