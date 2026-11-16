@@ -128,6 +128,9 @@ pub struct Agent {
     budget_extensions: i64,
     uncached_streak: usize,
     usage_base: i64,
+    /// size of the last prompt, and whether this provider has ever served part of one from its cache (see `forgive_rewarm`)
+    last_prompt: i64,
+    cache_seen: bool,
     review_sec: f64,
     pub undo_info: Option<Value>,
     long_answer: usize,
@@ -259,6 +262,8 @@ impl Agent {
             budget_extensions: 0,
             uncached_streak: 0,
             usage_base: 0,
+            last_prompt: 0,
+            cache_seen: false,
             review_sec: 0.0,
             undo_info: None,
             long_answer: 0,
@@ -344,6 +349,23 @@ impl Agent {
         let cm = self.session.context_manager.lock().unwrap();
         let u = &cm.total_usage;
         u.prompt_tokens - u.cached_tokens + u.completion_tokens
+    }
+
+    /// The budget is there to stop a request that keeps piling on new work, not to bill the same context twice.
+    /// When the provider's cache goes cold (we cleared old tool results, or the user came back after a coffee), the
+    /// whole prompt is charged as uncached even though almost none of it is new. Only the part the prompt grew by
+    /// counts; the rest is taken off this request's bill.
+    /// Example: the last prompt was 150k, we prune, the next is 130k with nothing cached. Growth is zero, so none of
+    /// those 130k count. Before this, that single call ate almost half of a 300k budget and the run got cut off.
+    /// A provider that never caches is charged in full as before: there the resend is the real cost every time.
+    fn forgive_rewarm(&mut self, u: &TokenUsage) {
+        self.cache_seen = self.cache_seen || u.cached_tokens > 0;
+        let uncached = u.prompt_tokens - u.cached_tokens;
+        let growth = (u.prompt_tokens - self.last_prompt).max(0);
+        if self.cache_seen && self.last_prompt > 0 && uncached > growth {
+            self.usage_base += uncached - growth;
+        }
+        self.last_prompt = u.prompt_tokens;
     }
 
     pub fn spent_tokens(&self) -> i64 {
@@ -1229,9 +1251,12 @@ impl Agent {
             }
             if tool_calls.is_empty() {
                 if let Some(u) = &usage {
-                    let mut cm = self.session.context_manager.lock().unwrap();
-                    cm.set_latest_usage(u.clone());
-                    cm.add_usage(u);
+                    {
+                        let mut cm = self.session.context_manager.lock().unwrap();
+                        cm.set_latest_usage(u.clone());
+                        cm.add_usage(u);
+                    }
+                    self.forgive_rewarm(u);
                 }
                 if text_call().is_match(&response_text) && self.text_calls < 2 {
                     self.text_calls += 1;
@@ -1323,6 +1348,7 @@ impl Agent {
                     cm.set_latest_usage(u.clone());
                     cm.add_usage(u);
                 }
+                self.forgive_rewarm(u);
                 // big prompts that never hit the cache are re-billed in full every call
                 self.uncached_streak = if u.prompt_tokens > 15_000 && u.cached_tokens == 0 { self.uncached_streak + 1 } else { 0 };
                 if self.uncached_streak == 3 {
