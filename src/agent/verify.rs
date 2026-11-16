@@ -124,11 +124,19 @@ fn eslint(cwd: &Path, files: &[String]) -> Vec<(String, String)> {
     }
     let mut out = vec![];
     for (d, rel) in by_pkg {
-        if [&d, &PathBuf::from(cwd)].iter().any(|x| x.join("node_modules/.bin/eslint").exists()) {
-            out.push((format!("{} exec eslint --quiet {}", package_runner(cwd, &d), rel.iter().map(|r| quote(r)).collect::<Vec<_>>().join(" ")), {
-                let r = crate::util::paths::rel_display(&d, cwd);
-                if r.is_empty() || r == d.to_string_lossy() { ".".into() } else { r }
-            }));
+        let has = |tool: &str| [&d, &PathBuf::from(cwd)].iter().any(|x| x.join("node_modules/.bin").join(tool).exists());
+        let sub = {
+            let r = crate::util::paths::rel_display(&d, cwd);
+            if r.is_empty() || r == d.to_string_lossy() { ".".to_string() } else { r }
+        };
+        if has("eslint") {
+            out.push((format!("{} exec eslint --quiet {}", package_runner(cwd, &d), rel.iter().map(|r| quote(r)).collect::<Vec<_>>().join(" ")), sub.clone()));
+        }
+        // Lint does not see a wrong prop, a missing import or a renamed field; the typecheck does, and on a TypeScript
+        // app it is the one check that says the change still fits the rest of the code. It covers the whole package
+        // because tsc cannot honour tsconfig.json for a single file.
+        if rel.iter().any(|f| f.ends_with(".ts") || f.ends_with(".tsx")) && d.join("tsconfig.json").is_file() && has("tsc") {
+            out.push((format!("{} exec tsc --noEmit", package_runner(cwd, &d)), sub));
         }
     }
     out
@@ -136,7 +144,8 @@ fn eslint(cwd: &Path, files: &[String]) -> Vec<(String, String)> {
 
 use std::path::PathBuf;
 
-/// One quick check of the files this run changed, never a build, the whole suite or a project-wide typecheck.
+/// Quick checks of the files this run changed, never a build or the whole suite. The one project-wide step is the
+/// TypeScript typecheck of the package a changed .ts file lives in.
 pub fn detect_checks(cwd: &Path, changed: &[String]) -> Vec<(String, String)> {
     let cwd = crate::util::paths::resolve(cwd);
     let live: Vec<&String> = changed.iter().filter(|f| cwd.join(f).is_file()).collect();
