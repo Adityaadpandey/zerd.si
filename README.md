@@ -102,7 +102,10 @@ summary, not the exact format:
 
 Every line there is a decision made by code, not by the model: which checks to run, whether a failure is the agent's or was
 already there, whether a public signature broke, whether the review has to go again. The final status is always one of
-`verified`, `unverified`, `verification_failed`, `failed` or `done_no_changes`. Never a bare "done".
+`verified`, `unverified`, `verification_failed`, `failed` or `done_no_changes`. Never a bare "done". An `unverified` result
+says which kind it is (no check covers these files, checks still running, a check was already failing, only docs changed).
+A run that hits the token budget before changing anything ends `failed` if you asked for a change, and
+`done_no_changes` if it was a question that had to answer early.
 
 ### The path every request takes
 
@@ -580,6 +583,10 @@ and **a cloned repo can't turn on code execution**: its `.zerd/config.toml` cann
 
 Approvals show a diff, and what you approve is exactly what gets written. Modes (Shift+Tab cycles): `on-request` (default),
 `auto-edit`, `auto`, `plan` (read-only, ends in a plan), `never`, `on-failure`, `yolo`.
+
+A script or a parallel worker has nobody to ask. When a step there needs a yes, zerd skips that one step, finishes
+everything else, and ends with the list: `Skipped 1 step(s) that needed approval with nobody to ask: \`npm run db:migrate\`.
+Re-run with --approval auto to allow them.` (also in the JSON report as `needs_approval`). Three skipped steps stop the run.
 
 ## Using it
 

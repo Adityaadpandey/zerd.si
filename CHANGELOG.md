@@ -7,6 +7,9 @@ All notable changes to zerd. Newest first. Versions follow [semver](https://semv
 - Checks run automatically in the interactive prompt again. One still running after 30 seconds (`verify_wait_sec`) moves to the background and prints its result when it finishes; a failure reaches the model with your next message.
 - When no check covers the changed files, zerd asks the model once to run something that proves the change.
 - An `unverified` result now says why (no check for these files, checks still running, token budget, a check that was already failing, docs only). It used to print "No verification commands found" for all of them.
+- A run that hits the token budget before changing anything is no longer filed as `unverified`: it ends `failed` for a change request and `done_no_changes` for a question. `zerd insights` shows the reason beside each outcome and counts zerd's own reviewer and sub-agent runs separately.
+- A run with nobody to approve a step (a script, a parallel worker) skips that step and finishes the rest, then lists what was skipped. It used to stop at the first one. The report carries the list as `needs_approval`.
+- Parallel workers are told where their own checkout is and get the request with its paths rewritten to it, so they stop being blocked reaching for the original repo.
 
 ## 0.1.2
 
