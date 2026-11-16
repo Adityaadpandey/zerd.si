@@ -83,13 +83,15 @@ Reads zerd's own trace files and reports, per model, failed calls, retries, spee
 
 ### `zerd telemetry [on|off|status]`
 
-Telemetry is off unless you turn it on. With `zerd telemetry on`, zerd sends one small record after each finished request so the harness can be tuned on more than one person's runs.
+Telemetry is off unless you turn it on, either here or by answering yes in `zerd setup`. When it is on, zerd writes one small record after each finished request so the harness can be tuned on more than one person's runs.
 
-Sent: a random id for the install, the zerd version, OS, model name, how the request ended, and counts (rounds, seconds, token totals, files changed, calls and errors per built-in tool, how often the loop stepped in).
+It never slows a request down: the record is a one-line append to a local file, and a background task posts whatever is waiting in a single batch. If you are offline, the records wait and go out later.
+
+Sent: a random id for the install, the zerd version, OS, model name, approval mode, how the request ended, and counts (rounds, seconds, token totals, the largest prompt, files changed, calls and errors per built-in tool, how often the loop stepped in).
 
 Never sent: what you typed, file names, commands, error text or code. MCP tools and your own tools are counted as "other" so their names stay with you.
 
-`zerd telemetry off` stops it and deletes the id. `DO_NOT_TRACK=1` or `ZERD_TELEMETRY=0` also switches it off.
+`zerd telemetry off` stops it, deletes the id and throws away anything still waiting to be sent. `zerd telemetry status` shows the current choice. `DO_NOT_TRACK=1` or `ZERD_TELEMETRY=0` also switches it off.
 
 ### `zerd probe-models [--json <file>]`
 
