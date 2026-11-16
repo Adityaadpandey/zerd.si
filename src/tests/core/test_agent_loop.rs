@@ -495,6 +495,20 @@ async fn budget_counts_new_work_not_a_resent_cached_prefix() {
 }
 
 #[tokio::test]
+async fn a_cold_cache_on_context_already_seen_does_not_use_up_the_budget() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "hi").unwrap();
+    let cfg = cfg(tmp.path(), json!({"auto_verify": false, "max_total_tokens": 10_000}));
+    // every other call misses the cache completely (a prune, or the user came back late): 100k billed, none of it new
+    let turn = |i: usize| with_usage(call_as("read_file", json!({"path": "a.txt"}), &format!("c{i}")), TokenUsage { prompt_tokens: 100_000, completion_tokens: 50, total_tokens: 100_050, cached_tokens: if i % 2 == 0 { 99_500 } else { 0 }, ..Default::default() });
+    let mut script: Vec<_> = (0..8).map(turn).collect();
+    script.push(text("done"));
+    let mut agent = scripted(cfg, script).await;
+    let events = run(&mut agent, "go").await;
+    assert!(!notices(&events).iter().any(|m| m.to_lowercase().contains("budget")), "{:?}", notices(&events));
+}
+
+#[tokio::test]
 async fn a_run_stopped_by_the_budget_still_reports_the_files_it_changed() {
     let tmp = tempfile::tempdir().unwrap();
     git_init(tmp.path());
