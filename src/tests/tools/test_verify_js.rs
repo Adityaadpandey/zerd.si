@@ -37,6 +37,21 @@ fn only_the_changed_files_are_checked_never_a_build_or_the_whole_suite() {
 }
 
 #[test]
+fn a_typescript_change_gets_the_typecheck_of_its_own_package() {
+    // a Next.js app with no eslint set up used to end "no verification commands" however broken the types were
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path();
+    touch(p, "package-lock.json", "");
+    touch(p, "package.json", "{}");
+    touch(p, "tsconfig.json", "{}");
+    touch(p, "node_modules/.bin/tsc", "x");
+    touch(p, "app/page.tsx", "x");
+    touch(p, "scripts/seed.js", "x");
+    assert_eq!(detect_checks(p, &s(&["app/page.tsx"])), vec![pair("npm exec tsc --noEmit", ".")]);
+    assert!(detect_checks(p, &s(&["scripts/seed.js"])).is_empty()); // plain JS: nothing for tsc to say
+}
+
+#[test]
 fn nothing_for_files_with_no_cheap_check() {
     // a Swift app's Tests/ folder is tests/ on macOS: it once made zerd run pytest on Swift and call "no tests ran" a failure
     let d = tempfile::tempdir().unwrap();

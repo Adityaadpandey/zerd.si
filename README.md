@@ -300,7 +300,7 @@ Everything below is code in `src/`, not a line in a prompt. Each item names wher
 ### It checks the change, and knows whose failure it is
 
 After edits, zerd picks checks for **only the changed files** (never a whole build): `pytest` for the tests that import the
-changed module (found through an import graph), `go vet`, `cargo check`, `eslint`, `promtool`, `docker compose config` for
+changed module (found through an import graph), `go vet`, `cargo check`, `eslint`, `tsc --noEmit` for the package a changed TypeScript file lives in, `promtool`, `docker compose config` for
 infra YAML, or your own `verify_commands` and per-path `[[verify_rules]]`. `agent/verify.rs`
 
 The part that matters: when a check fails, zerd **swaps in the pre-run copy of your files, runs the same check again, and puts
