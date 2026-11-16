@@ -22,4 +22,5 @@ pub mod rank;
 pub mod repomap;
 pub mod graphcfg;
 pub mod symgraph;
+pub mod telemetry;
 pub mod templates;
