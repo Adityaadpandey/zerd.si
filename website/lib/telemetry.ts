@@ -3,8 +3,11 @@
 //
 // The sending side is src/util/telemetry.rs in the zerd repo; the two lists have to stay in step.
 
-const TEXT = ["install", "zerd", "os", "arch", "model", "intent", "status", "stop"] as const;
-const NUMBERS = ["v", "rounds", "estimate", "sec", "calls", "prompt_tokens", "cached_tokens", "completion_tokens", "changed", "repairs", "checks", "checks_failed", "compactions", "prunes"] as const;
+const TEXT = ["rid", "install", "zerd", "os", "arch", "model", "intent", "status", "stop", "approval"] as const;
+const NUMBERS = [
+  "v", "rounds", "estimate", "sec", "model_sec", "tool_sec", "calls", "model_errors", "prompt_tokens", "cached_tokens", "completion_tokens",
+  "peak_prompt", "cold_calls", "window", "top_ups", "changed", "repairs", "checks", "checks_failed", "compactions", "prunes", "pi_mode", "sub_agent",
+] as const;
 
 export type TelemetryRecord = Record<string, string | number | Record<string, number | number[]>>;
 
@@ -16,7 +19,9 @@ const name = (k: string) => /^[a-z][a-z0-9_]{0,39}$/.test(k);
 export function clean(body: unknown): TelemetryRecord | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
   const b = body as Record<string, unknown>;
-  if (b.v !== 1 || typeof b.install !== "string" || !/^[0-9a-f-]{36}$/.test(b.install)) return null;
+  const id = (x: unknown) => typeof x === "string" && /^[0-9a-f-]{36}$/.test(x);
+  // rid is the record's own id: a batch that zerd had to send twice must not be counted twice
+  if (b.v !== 1 || !id(b.install) || !id(b.rid)) return null;
   const out: TelemetryRecord = {};
   for (const k of TEXT) if (typeof b[k] === "string") out[k] = (b[k] as string).slice(0, 80);
   for (const k of NUMBERS) {
