@@ -183,14 +183,13 @@ impl ContextManager {
         out
     }
 
+    /// Where the context gets folded: 70% of whatever window the current model has, so a 256k model folds near 179k
+    /// and a 1M model near 700k. `compact_at_tokens` is an optional lower ceiling for people who want it tighter
+    /// (0, the default, means no ceiling).
     pub fn limit(&self) -> f64 {
         let cfg = self.config.get();
-        if cfg.pi_mode {
-            // pi: compact when the next reply would no longer fit, but a big window is still no reason to carry 240k of history
-            return (self.context_window as f64 - 16_384.0).min(cfg.compact_at_tokens as f64);
-        }
-        // a 1M window doesn't mean 800k tokens of history is a good idea: cap with compact_at_tokens
-        (self.context_window as f64 * 0.8).min(cfg.compact_at_tokens as f64)
+        let by_window = self.context_window as f64 * 0.7;
+        if cfg.compact_at_tokens > 0 { by_window.min(cfg.compact_at_tokens as f64) } else { by_window }
     }
 
     /// What the next prompt will roughly weigh, before the provider says. Right after a compaction this is the only
