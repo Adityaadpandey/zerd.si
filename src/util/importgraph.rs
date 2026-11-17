@@ -141,6 +141,8 @@ type Rule = (String, Vec<String>);
 /// `paths` entries of the nearest tsconfig.json/jsconfig.json above a file, as (prefix, [targets relative to the repo]).
 struct Aliases {
     rules: HashMap<String, Vec<Rule>>,
+    /// Monorepo packages by their package.json name: ("@plane/utils", "packages/utils"), longest name first.
+    packages: Vec<(String, String)>,
 }
 
 fn rel_to(cwd: &Path, p: &Path) -> String {
@@ -186,7 +188,16 @@ impl Aliases {
                 rules.insert(rel_to(cwd, &resolve(found.parent().unwrap_or(Path::new(".")))), rs);
             }
         }
-        Aliases { rules }
+        Aliases { rules, packages: workspace_packages(cwd) }
+    }
+
+    /// "@plane/utils/datetime" -> packages/utils/src/datetime.ts. The package.json usually points at a build folder
+    /// (dist/) that git doesn't track, so the source is looked for in src/ first, then at the package's top.
+    fn package_file(&self, spec: &str, known: &HashSet<String>) -> Option<String> {
+        let (name, dir) = self.packages.iter().find(|(n, _)| spec == n || spec.strip_prefix(n.as_str()).map_or(false, |r| r.starts_with('/')))?;
+        let sub = spec[name.len()..].trim_start_matches('/');
+        let sub = if sub.is_empty() { "index" } else { sub };
+        [format!("{dir}/src/{sub}"), format!("{dir}/{sub}")].iter().find_map(|base| resolve_js(base, known))
     }
 
     fn for_file(&self, rel: &str) -> &[Rule] {
@@ -205,12 +216,50 @@ impl Aliases {
     }
 }
 
+/// Every package.json in the repo that has a name, as (name, folder). Folders git ignores (node_modules) aren't listed.
+fn workspace_packages(cwd: &Path) -> Vec<(String, String)> {
+    let Ok(o) = std::process::Command::new("git").args(["ls-files", "--cached", "--others", "--exclude-standard", "*package.json"]).current_dir(cwd).output() else { return vec![] };
+    let mut found: Vec<(String, String)> = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .filter(|p| *p == "package.json" || p.ends_with("/package.json"))
+        .filter_map(|p| {
+            let name = jsonc(&cwd.join(p)).get("name")?.as_str()?.to_string();
+            Some((name, p.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string())))
+        })
+        .collect();
+    found.sort_by_key(|(n, _)| std::cmp::Reverse(n.len())); // "@a/ui-kit" before "@a/ui"
+    found
+}
+
 fn resolve_js(base: &str, known: &HashSet<String>) -> Option<String> {
     let base = base.trim_end_matches('/');
     JS_EXT.iter().map(|e| format!("{base}{e}")).find(|c| known.contains(c))
 }
 
-fn py_targets(rel: &str, src: &str, known: &HashSet<String>) -> HashSet<String> {
+/// Folders Python imports are written from. A repo often keeps its package below the top: `apps/api/plane/...` is
+/// imported as `plane...`, so `apps/api` is a root. A folder is one when it holds a `manage.py`, or a package (a folder
+/// with `__init__.py`) whose own folder isn't a package. The repo top is always one.
+fn py_roots(known: &HashSet<String>) -> Vec<String> {
+    let parent = |p: &str| p.rsplit_once('/').map_or(String::new(), |(d, _)| d.to_string());
+    let is_pkg = |d: &str| !d.is_empty() && known.contains(&format!("{d}/__init__.py"));
+    let mut roots: BTreeSet<String> = BTreeSet::from([String::new()]);
+    for f in known {
+        if f == "manage.py" || f.ends_with("/manage.py") {
+            roots.insert(parent(f));
+        } else if f.ends_with("__init__.py") {
+            let pkg = parent(f);
+            if !is_pkg(&parent(&pkg)) {
+                roots.insert(parent(&pkg));
+            }
+        }
+    }
+    roots.into_iter().collect()
+}
+
+fn py_targets(rel: &str, src: &str, known: &HashSet<String>, roots: &[String]) -> HashSet<String> {
+    // only the roots this file sits under, innermost first, so two projects with a `utils` package don't mix
+    let mut mine: Vec<&String> = roots.iter().filter(|r| r.is_empty() || rel.starts_with(&format!("{r}/"))).collect();
+    mine.sort_by_key(|r| std::cmp::Reverse(r.len()));
     let mut names: Vec<String> = vec![];
     for im in pyscan::imports(src) {
         if im.level > 0 {
@@ -239,11 +288,15 @@ fn py_targets(rel: &str, src: &str, known: &HashSet<String>) -> HashSet<String> 
     let mut found = HashSet::new();
     for name in names {
         let parts: Vec<&str> = name.split('.').collect();
-        for i in (1..=parts.len()).rev() {
-            let base = parts[..i].join("/");
-            if let Some(hit) = [format!("{base}.py"), format!("{base}/__init__.py")].into_iter().find(|c| known.contains(c)) {
-                found.insert(hit);
-                break;
+        // an absolute import may start at any root this file is under (a relative one is already spelled from the top,
+        // so the inner roots just miss and the top finds it)
+        'roots: for root in &mine {
+            for i in (1..=parts.len()).rev() {
+                let base = if root.is_empty() { parts[..i].join("/") } else { format!("{root}/{}", parts[..i].join("/")) };
+                if let Some(hit) = [format!("{base}.py"), format!("{base}/__init__.py")].into_iter().find(|c| known.contains(c)) {
+                    found.insert(hit);
+                    break 'roots;
+                }
             }
         }
     }
@@ -279,6 +332,9 @@ fn js_targets(rel: &str, src: &str, known: &HashSet<String>, aliases: &Aliases) 
                     }
                 }
             }
+            if hit.is_none() {
+                hit = aliases.package_file(&spec, known);
+            }
         }
         found.extend(hit);
     }
@@ -295,11 +351,12 @@ impl ImportGraph {
     fn build(cwd: &Path, files: Vec<String>) -> ImportGraph {
         let known: HashSet<String> = files.iter().cloned().collect();
         let aliases = Aliases::new(cwd);
+        let roots = py_roots(&known);
         let mut out: HashMap<String, HashSet<String>> = files.iter().map(|f| (f.clone(), HashSet::new())).collect();
         let mut inc: HashMap<String, HashSet<String>> = HashMap::new();
         for f in &files {
             let Ok(src) = std::fs::read_to_string(cwd.join(f)) else { continue };
-            let mut targets = if f.ends_with(".py") { py_targets(f, &src, &known) } else { js_targets(f, &src, &known, &aliases) };
+            let mut targets = if f.ends_with(".py") { py_targets(f, &src, &known, &roots) } else { js_targets(f, &src, &known, &aliases) };
             targets.remove(f);
             for t in &targets {
                 inc.entry(t.clone()).or_default().insert(f.clone());
@@ -400,10 +457,32 @@ mod tests {
     #[test]
     fn js_relative_and_py() {
         let known: HashSet<String> = ["a/b.ts", "a/c/index.ts", "pkg/mod.py", "pkg/__init__.py"].iter().map(|s| s.to_string()).collect();
-        let al = Aliases { rules: HashMap::new() };
+        let al = Aliases { rules: HashMap::new(), packages: vec![] };
         let t = js_targets("a/x.ts", "import b from './b';\nimport c from \"./c\";", &known, &al);
         assert!(t.contains("a/b.ts") && t.contains("a/c/index.ts"));
-        let p = py_targets("main.py", "from pkg import mod\n", &known);
+        let p = py_targets("main.py", "from pkg import mod\n", &known, &py_roots(&known));
         assert!(p.contains("pkg/mod.py"));
+    }
+
+    #[test]
+    fn workspace_packages_resolve_to_their_source() {
+        // a monorepo imports "@plane/utils", whose package.json points at dist/; the code we can read is in src/
+        let known: HashSet<String> = ["packages/utils/src/index.ts", "packages/utils/src/datetime.ts", "packages/ui/index.tsx", "apps/web/page.tsx"].iter().map(|s| s.to_string()).collect();
+        let al = Aliases { rules: HashMap::new(), packages: vec![("@plane/utils".into(), "packages/utils".into()), ("@plane/ui".into(), "packages/ui".into())] };
+        let t = js_targets("apps/web/page.tsx", "import { a } from \"@plane/utils\";\nimport { d } from '@plane/utils/datetime';\nimport { B } from '@plane/ui';\nimport x from '@plane/utilsx';", &known, &al);
+        assert_eq!(t, HashSet::from(["packages/utils/src/index.ts", "packages/utils/src/datetime.ts", "packages/ui/index.tsx"].map(String::from)));
+    }
+
+    #[test]
+    fn py_imports_resolve_from_the_project_folder_not_only_the_repo_root() {
+        // a Django app under apps/api/ imports `plane.utils.x`, which lives at apps/api/plane/utils/x.py
+        let known: HashSet<String> = ["apps/api/manage.py", "apps/api/plane/__init__.py", "apps/api/plane/utils/__init__.py", "apps/api/plane/utils/log.py", "apps/api/plane/views/base.py", "apps/api/plane/views/__init__.py", "tools/plane/utils/log.py"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let roots = py_roots(&known);
+        assert!(roots.contains(&"apps/api".to_string()));
+        let p = py_targets("apps/api/plane/views/base.py", "from plane.utils.log import log_exception\n", &known, &roots);
+        assert_eq!(p, HashSet::from(["apps/api/plane/utils/log.py".to_string()]), "the file's own project, not tools/");
     }
 }
