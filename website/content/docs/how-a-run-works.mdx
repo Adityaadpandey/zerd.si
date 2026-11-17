@@ -52,7 +52,7 @@ Code makes every decision in that run: which checks to run, whether a failure is
 2. Work. The agent loop reads, edits and runs tools.
 3. Check. If files changed, checks run on those files only. New failures go back for repair, up to 2 rounds.
 4. Guard. A broken public signature sends the agent back once.
-5. Review. An independent review of the diff runs if you asked for it or turned on `auto_review`.
+5. Review. An independent review of the diff runs if you asked for it, turned on `auto_review`, or the change touches a path where a mistake is expensive (`src/auth/`, `db/migrations/`, `billing/`). Tests and docs don't count, and `review_risky = false` turns this off.
 6. Cite. Every file and line in the answer is looked up on disk.
 
 ## The five endings

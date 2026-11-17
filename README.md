@@ -647,7 +647,7 @@ zerd behaves a little differently when you talk to it and when a script does, be
 | | Interactive | One-shot / `--json` / `--rpc` |
 |---|---|---|
 | Checks on changed files | **automatically** after edits; a check still running after 30s (`verify_wait_sec`) finishes in the background and prints its result while you carry on | **automatically** after edits, waits for all of them |
-| Independent diff review | when you ask ("review my changes"); set `auto_review = true` to review every change | same |
+| Independent diff review | when you ask ("review my changes"), and on its own when the change touches auth, payments, secrets, permissions or migrations (`review_risky = false` turns that off); set `auto_review = true` to review every change | same |
 | Challenger on risky requests | on | off (`--challenge` turns it on) |
 | Learning from corrections | on | off |
 | Approvals | `on-request` | `auto-edit` unless you pass `--approval` |

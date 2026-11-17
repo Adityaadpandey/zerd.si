@@ -129,7 +129,7 @@ Long-running commands can go to the background:
 | | Interactive | One-shot, `--json`, `--rpc` |
 |---|---|---|
 | Checks on changed files | when you run `/verify` | automatically after edits, with repair rounds |
-| Independent diff review | when you ask. Set `auto_review = true` to review every change | same |
+| Independent diff review | when you ask, and on its own when the change touches auth, payments, secrets, permissions or migrations (`review_risky = false` turns that off). Set `auto_review = true` to review every change | same |
 | Challenger on risky requests | on | off (`--challenge` turns it on) |
 | Learning from corrections | on | off |
 | Approvals | `on-request` | `auto-edit` unless you pass `--approval` |
