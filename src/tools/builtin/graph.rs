@@ -9,6 +9,15 @@ use std::path::Path;
 
 const LIMIT: usize = 25;
 
+/// Said out loud when a list was cut, so "used in 78 places" followed by 50 rows isn't read as the whole list
+/// (a rename done from that list would leave 28 call sites behind).
+fn unlisted(total: usize) -> String {
+    match total.saturating_sub(LIMIT * 2) {
+        0 => String::new(),
+        n => format!("\n  ... and {n} more not listed; action=impact groups every one of them by file"),
+    }
+}
+
 pub struct GraphTool {
     _config: ConfigHandle,
 }
@@ -56,12 +65,12 @@ impl GraphTool {
                 "callers" => {
                     let rows = sg.callers(file, &d.name);
                     let body = rows.iter().take(LIMIT * 2).map(|r| format!("  {}:{}{}", r.file, r.line, r.in_def.as_ref().map_or(String::new(), |f| format!("  in {f}")))).collect::<Vec<_>>().join("\n");
-                    out.push(format!("{head}\nused in {} place(s) (calls, type mentions, JSX, passed as a callback):\n{body}", rows.len()));
+                    out.push(format!("{head}\nused in {} place(s) (calls, type mentions, JSX, passed as a callback):\n{body}{}", rows.len(), unlisted(rows.len())));
                 }
                 "callees" => {
                     let rows = sg.callees(file, &d.name);
                     let body = rows.iter().take(LIMIT * 2).map(|(f, c)| format!("  {:<30} {f}:{}", c.name, c.line)).collect::<Vec<_>>().join("\n");
-                    out.push(format!("{head}\ncalls {} definition(s) found in the repo (library calls are not listed):\n{body}", rows.len()));
+                    out.push(format!("{head}\ncalls {} definition(s) found in the repo (library calls are not listed):\n{body}{}", rows.len(), unlisted(rows.len())));
                 }
                 _ => {
                     // impact: the same calls, grouped by file so it reads as "what to re-check"
