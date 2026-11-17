@@ -202,6 +202,46 @@ fn callee(n: Node, src: &str) -> Option<(String, Option<String>)> {
     Some((name, qual.filter(|q| !q.is_empty())))
 }
 
+fn push_call(out: &mut FileSyms, from: Option<usize>, name: String, qual: Option<String>, line: usize) {
+    // Config::new() is also a use of Config
+    if let Some(ty) = qual.as_ref().filter(|q| q.starts_with(char::is_uppercase) && q.as_str() != "Self") {
+        out.calls.push(Call { from, name: ty.clone(), line, qual: None });
+    }
+    out.calls.push(Call { from, name, line, qual });
+}
+
+/// tree-sitter doesn't parse inside a Rust macro: `assert_eq!(classify(x).0, 1)` is a flat run of tokens. A name
+/// followed by a `( ... )` group is a call, written the way `callee` would describe it: `run(` -> ("run", None),
+/// `self.size(` -> ("size", ".self"), `cfg.a.load(` -> ("load", "."), `Config::load(` -> ("load", "Config").
+/// Nested groups are walked on their own, so only this group's own tokens are read here.
+fn macro_calls(tree: Node, src: &str) -> Vec<(String, Option<String>, usize)> {
+    const KEYWORDS: &[&str] = &["if", "while", "match", "for", "in", "return", "loop", "move", "as", "let", "else", "fn", "async", "await", "mut", "ref", "where", "impl", "dyn"];
+    let mut c = tree.walk();
+    let toks: Vec<Node> = tree.children(&mut c).collect();
+    let mut found = vec![];
+    for i in 0..toks.len().saturating_sub(1) {
+        let (t, next) = (toks[i], toks[i + 1]);
+        if t.kind() != "identifier" || next.kind() != "token_tree" || !text(next, src).starts_with('(') {
+            continue;
+        }
+        let name = text(t, src);
+        if KEYWORDS.contains(&name) {
+            continue;
+        }
+        let before = |k: usize| i.checked_sub(k).map(|j| toks[j]);
+        let qual = match before(1).map(|p| text(p, src)) {
+            Some(".") => Some(match before(2) {
+                Some(o) if matches!(o.kind(), "identifier" | "self") && before(3).map_or(true, |p| text(p, src) != ".") => format!(".{}", text(o, src)),
+                _ => ".".to_string(),
+            }),
+            Some("::") => before(2).filter(|o| o.kind() == "identifier").map(|o| text(o, src).to_string()),
+            _ => None,
+        };
+        found.push((name.to_string(), qual, t.start_position().row + 1));
+    }
+    found
+}
+
 /// `refs` is on for JS/TS/Python, where a function handed over by name (`router.get("/x", handler)`, `onClick={save}`)
 /// is how most of them get run, so it counts as a use.
 fn walk(n: Node, src: &str, cur: Option<usize>, parent: &Option<String>, out: &mut FileSyms, depth: usize, refs: bool) {
@@ -247,12 +287,13 @@ fn walk(n: Node, src: &str, cur: Option<usize>, parent: &Option<String>, out: &m
         });
         Some((name, qual))
     };
-    if let Some((name, qual)) = target.and_then(|t| callee(t, src)).or_else(named) {
-        // Config::new() is also a use of Config
-        if let Some(ty) = qual.as_ref().filter(|q| q.starts_with(char::is_uppercase) && q.as_str() != "Self") {
-            out.calls.push(Call { from: cur, name: ty.clone(), line, qual: None });
+    if n.kind() == "token_tree" {
+        // Rust macro arguments: assert_eq!(classify(x).0, 1), format!("{}", f()), try_stream! { step().await }
+        for (name, qual, line) in macro_calls(n, src) {
+            push_call(out, cur, name, qual, line);
         }
-        out.calls.push(Call { from: cur, name, line, qual });
+    } else if let Some((name, qual)) = target.and_then(|t| callee(t, src)).or_else(named) {
+        push_call(out, cur, name, qual, line);
     } else {
         let up = n.parent();
         let named_here = |field: &str| up.and_then(|p| p.child_by_field_name(field)).map_or(false, |x| x.id() == n.id());
@@ -751,7 +792,8 @@ fn cache_file(root: &Path) -> std::path::PathBuf {
     crate::config::loader::get_data_dir().join("graph").join(format!("{}.json", &h[..16]))
 }
 
-const CACHE_VERSION: u32 = 3; // 2: calls carry what they were written after, and types / JSX / handed-over functions count as uses
+const CACHE_VERSION: u32 = 4; // 4: calls inside Rust macros (assert!, format!, vec!, json!, try_stream!) count
+// 2: calls carry what they were written after, and types / JSX / handed-over functions count as uses
 
 /// What the last session parsed, if anything. A bad or old file is just ignored: we re-parse and overwrite it.
 fn read_disk(root: &Path) -> HashMap<String, Entry> {
@@ -864,6 +906,23 @@ mod tests {
         assert_eq!(names(&go), ["method:Do", "function:helper"]);
         assert_eq!(go.defs[0].parent.as_deref(), Some("R"));
         assert!(go.calls.iter().any(|c| c.name == "helper") && go.calls.iter().any(|c| c.name == "Println"));
+    }
+
+    #[test]
+    fn rust_calls_inside_macros_count() {
+        // tree-sitter leaves a macro's arguments as loose tokens, so these calls used to be invisible to `callers`
+        let src = "fn t() {\n    assert_eq!(classify(\"x\").0, 1);\n    let v = vec![build(), self.size(2)];\n    let s = format!(\"{}\", json!({\"a\": Config::load(&p)}));\n    Box::pin(try_stream! { if ready(x) { yield step(); } });\n}\n";
+        let rs = extract("a.rs", src).unwrap();
+        let call = |name: &str| rs.calls.iter().find(|c| c.name == name).map(|c| (c.line, c.qual.clone()));
+        assert_eq!(call("classify"), Some((2, None)));
+        assert_eq!(call("build"), Some((3, None)));
+        assert_eq!(call("size"), Some((3, Some(".self".into()))));
+        assert_eq!(call("load"), Some((4, Some("Config".into()))));
+        assert!(call("Config").is_some(), "Config::load is also a use of Config");
+        assert_eq!(call("ready").map(|c| c.0), Some(5));
+        assert_eq!(call("step").map(|c| c.0), Some(5));
+        // a keyword before parentheses is not a call
+        assert!(call("if").is_none());
     }
 
     #[test]
