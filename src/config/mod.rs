@@ -293,6 +293,9 @@ pub struct Config {
     pub advisor_model: String,
     pub advisor_max_calls: usize,
     pub auto_review: bool,
+    /// Review a change that touches auth, payments, secrets, permissions or migrations even with `auto_review` off.
+    /// A typo fix doesn't need a second pair of eyes; a change to `src/auth/session.ts` does.
+    pub review_risky: bool,
     pub max_reviews: usize,
     pub review_pipeline: bool,
     pub review_pipeline_role: String,
@@ -386,6 +389,7 @@ impl Default for Config {
             advisor_model: "deepseek/deepseek-v4-pro".into(),
             advisor_max_calls: 4,
             auto_review: false,
+            review_risky: true,
             max_reviews: 2,
             review_pipeline: true,
             review_pipeline_role: "default".into(),

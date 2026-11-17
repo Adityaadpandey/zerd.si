@@ -233,6 +233,7 @@ async fn run_job(job: Job) -> ToolResult {
     cfg.max_seconds = soft_budget(def.timeout_seconds);
     cfg.model_role = def.role.clone();
     cfg.auto_review = false;
+    cfg.review_risky = false; // like auto_review: a helper or worker run never starts a review of its own
     cfg.subagents = vec![]; // no recursive delegation
     cfg.enable_parallel_tasks = false;
     cfg.mcp_servers = Default::default(); // starting every MCP server per sub-agent costs seconds and the task is local

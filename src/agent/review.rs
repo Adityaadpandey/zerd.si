@@ -172,6 +172,7 @@ pub async fn review_changes(config: &Config, request: &str, files: &[String], ch
     cfg.model_role = role.into();
     cfg.allowed_tools = Some(["read_file", "grep", "search", "outline", "git", "glob", "list_dir", "use_skill"].iter().map(|s| s.to_string()).collect());
     cfg.auto_review = false;
+    cfg.review_risky = false; // like auto_review: a helper or worker run never starts a review of its own
     cfg.auto_verify = false;
     cfg.verify_commands = vec![];
     cfg.verify_rules = vec![];

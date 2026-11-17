@@ -86,6 +86,7 @@ impl Tool for ParallelTasksTool {
         cfg.enable_parallel_tasks = false;
         cfg.subagents = vec![];
         cfg.auto_review = false;
+        cfg.review_risky = false; // like auto_review: a helper or worker run never starts a review of its own
         let request = nodes.iter().map(|n| n.goal.clone()).collect::<Vec<_>>().join("; ");
         let workers = cfg.max_parallel_agents;
         let orch = Orchestrator::new(cfg, workers, inv.progress.clone());

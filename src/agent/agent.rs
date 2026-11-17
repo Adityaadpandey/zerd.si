@@ -12,7 +12,7 @@ use crate::agent::review_fix;
 use crate::agent::review_fix_verify::verify_fix;
 use crate::agent::review_pipeline::{run_review_pipeline, Finding, PipelineEvent};
 use crate::agent::root::pick_root;
-use crate::agent::routing_policy::{classify, effort, keep_cached_model, length_hint, one_agent, is_reviewy, typed};
+use crate::agent::routing_policy::{classify, effort, keep_cached_model, length_hint, one_agent, is_reviewy, risky_change, typed};
 use crate::agent::scope::{is_broad, SWEEP, SWEEP_CHECKPOINT};
 use crate::agent::session::Session;
 use crate::agent::skills::match_skills;
@@ -974,9 +974,14 @@ impl Agent {
 
             // checks passed (or none exist): an independent reviewer reads the real diff
             let max_reviews = if self.fix_run { cfg.max_reviews.max(3) } else { cfg.max_reviews }; // a fix gets review, repair, re-review
-            if (cfg.auto_review || self.fix_run) && reviews < max_reviews && !task.expired() {
+            // with review off, a change to auth, payments, secrets or migrations is still worth a second look
+            let risky = if cfg.auto_review || self.fix_run || !cfg.review_risky { None } else { risky_change(&task.changed_files) };
+            if (cfg.auto_review || self.fix_run || risky.is_some()) && reviews < max_reviews && !task.expired() {
                 reviews += 1;
-                notice(&tx, "Independent review of the diff...");
+                match (&risky, reviews) {
+                    (Some((file, why)), 1) => notice(&tx, format!("{file} touches {why}, where a mistake is expensive; an independent reviewer is reading the diff...")),
+                    _ => notice(&tx, "Independent review of the diff..."),
+                }
                 let t_review = Instant::now();
                 let fixing = if sent_back.is_empty() { None } else { Some(sent_back.clone()) };
                 let fr = final_response.clone().unwrap_or_default();

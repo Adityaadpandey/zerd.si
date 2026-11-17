@@ -868,6 +868,7 @@ pub async fn ask(config: &Config, prompt: &str, role: &str, max_turns: usize, ma
     cfg.model_role = role.into();
     cfg.allowed_tools = Some(tools.unwrap_or_else(|| ["read_file", "grep", "glob", "list_dir", "graph", "search", "outline", "git", "use_skill"].iter().map(|s| s.to_string()).collect()));
     cfg.auto_review = false;
+    cfg.review_risky = false; // like auto_review: a helper or worker run never starts a review of its own
     cfg.auto_verify = false;
     cfg.verify_commands = vec![];
     cfg.verify_rules = vec![];
