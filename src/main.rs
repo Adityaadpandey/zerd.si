@@ -113,6 +113,11 @@ fn main() {
             println!("{}", r.error.unwrap_or(r.output));
             std::process::exit(0);
         }
+        // `zerd graph --help` used to index a folder called "--help" and report 0 files
+        if raw.get(2).map_or(false, |a| a.starts_with('-')) {
+            println!("zerd graph [folder]                    index the code graph and set it up (ignores, notes)\nzerd graph <action> <name> [to|dir]    ask it what the model would see, e.g. zerd graph callers parse_invoice\n\nactions: {}", ASK.join(", "));
+            std::process::exit(0);
+        }
         std::process::exit(util::graphcfg::main(raw.into_iter().skip(2).collect()));
     }
     if matches!(raw.get(1).map(String::as_str), Some("setup" | "doctor")) {
