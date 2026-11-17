@@ -368,10 +368,18 @@ impl SymGraph {
         }
         // Imports are only tracked for py/js/ts. For the rest, any file may mean it.
         match self.imports.out.get(from_file) {
-            // directly, or through a barrel: import { x } from "./lib" where lib/index.ts re-exports from lib/x.ts
+            // directly, or through barrels: import { x } from "@/components/icons" where icons/index.ts re-exports
+            // ./attachment, whose index.ts re-exports ./attachment-icon. A few levels deep is common in big frontends.
             Some(out) if self.imports.out.contains_key(def_file) => {
-                let barrel = |m: &String| m.rsplit('/').next().map_or(false, |n| n.starts_with("index.") || n == "__init__.py");
-                out.contains(def_file) || out.iter().any(|m| barrel(m) && self.imports.out.get(m).map_or(false, |o| o.contains(def_file)))
+                let barrel = |m: &&String| m.rsplit('/').next().map_or(false, |n| n.starts_with("index.") || n == "__init__.py");
+                let mut level: Vec<&String> = out.iter().collect();
+                for _ in 0..4 {
+                    if level.iter().any(|m| *m == def_file) {
+                        return true;
+                    }
+                    level = level.into_iter().filter(barrel).filter_map(|m| self.imports.out.get(m)).flatten().collect();
+                }
+                level.iter().any(|m| *m == def_file)
             }
             _ => true,
         }
@@ -999,6 +1007,24 @@ mod tests {
         let g = load(d.path());
         assert_eq!(who(&g, "ui/Nav.tsx", "Nav"), ["app.tsx:4"]);
         assert_eq!(who(&g, "lib/save.ts", "save"), ["app.tsx:4"]);
+    }
+
+    #[test]
+    fn barrels_two_deep_and_workspace_packages_reach_the_definition() {
+        let d = repo(&[
+            // icons/index.ts -> icons/attachment/index.ts -> icons/attachment/file-icon.ts
+            ("web/icons/attachment/file-icon.ts", "export function getFileIcon() {}\n"),
+            ("web/icons/attachment/index.ts", "export * from './file-icon';\n"),
+            ("web/icons/index.ts", "export * from './attachment';\n"),
+            // a monorepo package imported by its name
+            ("packages/utils/package.json", "{\"name\": \"@acme/utils\", \"main\": \"./dist/index.js\"}\n"),
+            ("packages/utils/src/time.ts", "export function toHours() {}\n"),
+            ("packages/utils/src/index.ts", "export * from './time';\n"),
+            ("web/page.ts", "import { getFileIcon } from './icons';\nimport { toHours } from '@acme/utils';\ngetFileIcon();\ntoHours();\n"),
+        ]);
+        let g = load(d.path());
+        assert_eq!(who(&g, "web/icons/attachment/file-icon.ts", "getFileIcon"), ["web/page.ts:3"]);
+        assert_eq!(who(&g, "packages/utils/src/time.ts", "toHours"), ["web/page.ts:4"]);
     }
 
     #[test]
