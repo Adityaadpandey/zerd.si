@@ -76,6 +76,27 @@ pub fn classify(request: &str) -> (&'static str, String) {
     ("default", "ordinary task".into())
 }
 
+/// A path where a mistake is expensive: auth, money, secrets, permissions, schema migrations. Matched on whole path
+/// pieces so "policy" in routing_policy.rs or "author" in author.ts doesn't count.
+fn risky_path() -> &'static Re {
+    static R: OnceLock<Re> = OnceLock::new();
+    R.get_or_init(|| lit_i(r"(?:^|[/_.\-])(?:auth|authn|authz|authentication|authorization|oauth|login|passwords?|secrets?|credentials?|payments?|billing|checkout|stripe|migrations?|migrate|permissions?|rbac|acl|iam)(?:[/_.\-]|$)"))
+}
+/// Tests and docs can't break production, so they don't make a change risky.
+fn test_or_doc() -> &'static Re {
+    static R: OnceLock<Re> = OnceLock::new();
+    R.get_or_init(|| lit_i(r"(?:^|/)(?:tests?|__tests__|specs?|docs?)/|(?:^|/)test_|_test\.|\.(?:test|spec)\.|\.md$"))
+}
+
+/// The first changed file on a high-risk path, with the word that flagged it: `src/auth/session.ts` gives
+/// `("src/auth/session.ts", "auth")`. Such a change gets an independent review even when `auto_review` is off.
+pub fn risky_change(files: &[String]) -> Option<(String, String)> {
+    files.iter().filter(|f| !test_or_doc().is_match(f)).find_map(|f| {
+        let (s, e) = risky_path().find(f)?;
+        Some((f.clone(), f[s..e].trim_matches(|c| "/_.-".contains(c)).to_lowercase()))
+    })
+}
+
 /// Tokens of context worth keeping cached.
 const CACHE_WORTH_KEEPING: i64 = 20_000;
 
@@ -118,5 +139,24 @@ mod tests {
         assert_eq!(classify("add a button to the page").0, "default");
         assert_eq!(keep_cached_model("strong", 30_000), "default");
         assert!(one_agent().is_match("review it with one single agent"));
+    }
+
+    #[test]
+    fn risky_paths() {
+        let risky = |f: &str| risky_change(&[f.to_string()]).map(|(_, why)| why);
+        assert_eq!(risky("src/auth/session.ts").as_deref(), Some("auth"));
+        assert_eq!(risky("db/migrations/0042_users.sql").as_deref(), Some("migrations"));
+        assert_eq!(risky("app/payment_service.py").as_deref(), Some("payment"));
+        assert_eq!(risky("config/secrets.yaml").as_deref(), Some("secrets"));
+        // a word inside a longer name, or a test or doc about the risky thing, is not risky
+        assert_eq!(risky("src/agent/routing_policy.rs"), None);
+        assert_eq!(risky("src/author.ts"), None);
+        assert_eq!(risky("src/william.py"), None);
+        assert_eq!(risky("tests/test_auth.py"), None);
+        assert_eq!(risky("src/auth/login.test.ts"), None);
+        assert_eq!(risky("docs/auth.md"), None);
+        // the first risky file is the one named, whatever comes before it
+        let files = vec!["README.md".to_string(), "src/billing/invoice.rs".to_string()];
+        assert_eq!(risky_change(&files), Some(("src/billing/invoice.rs".into(), "billing".into())));
     }
 }

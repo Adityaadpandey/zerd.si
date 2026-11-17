@@ -98,6 +98,7 @@ pub async fn challenge_request(config: &Config, request: &str) -> (Vec<Objection
     cfg.model_pinned = false;
     cfg.allowed_tools = Some(["read_file", "grep", "search", "outline", "git", "glob", "list_dir"].iter().map(|s| s.to_string()).collect());
     cfg.auto_review = false;
+    cfg.review_risky = false; // like auto_review: a helper or worker run never starts a review of its own
     cfg.auto_verify = false;
     cfg.auto_scout = false;
     cfg.auto_challenge = false;
