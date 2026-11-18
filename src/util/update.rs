@@ -39,8 +39,9 @@ fn installed_binary() -> Option<std::path::PathBuf> {
     (!exe.components().any(|c| c.as_os_str() == "target")).then_some(exe)
 }
 
-/// Runs the install script into this binary's folder. True when it worked.
-fn install(exe: &std::path::Path) -> bool {
+/// Runs the install script into this binary's folder. True when it worked. `quiet` keeps its output off the screen,
+/// for when the full-screen view is up and a script printing into it would scramble it.
+fn install(exe: &std::path::Path, quiet: bool) -> bool {
     let dir = exe.parent().unwrap_or(exe);
     let mut cmd = if cfg!(windows) {
         // Windows won't overwrite a running .exe, but it will rename one
@@ -53,7 +54,8 @@ fn install(exe: &std::path::Path) -> bool {
         c.args(["-c", "curl -fsSL https://www.zerd.si/install.sh | sh"]);
         c
     };
-    let ok = cmd.env("ZERD_BIN", dir).status().map_or(false, |s| s.success());
+    cmd.env("ZERD_BIN", dir);
+    let ok = if quiet { cmd.output().map_or(false, |o| o.status.success()) } else { cmd.status().map_or(false, |s| s.success()) };
     if !ok && cfg!(windows) {
         let _ = std::fs::rename(exe.with_extension("exe.old"), exe);
     }
@@ -97,7 +99,7 @@ pub async fn offer_on_launch() {
     let mut a = String::new();
     let _ = std::io::stdin().read_line(&mut a);
     if matches!(a.trim().to_lowercase().as_str(), "" | "y" | "yes") {
-        if install(&exe) {
+        if install(&exe, false) {
             restart(&exe);
         }
         eprintln!("{}", paint("The update didn't go through; carrying on with this version. zerd update tries again.", CORAL));
@@ -122,7 +124,23 @@ pub async fn main() -> i32 {
         return 1;
     };
     println!("updating zerd {current} -> {}", tag.trim_start_matches('v'));
-    if install(&exe) { 0 } else { 1 }
+    if install(&exe, false) { 0 } else { 1 }
+}
+
+/// `/update` inside a session: installs quietly and says how to switch over, since restarting would end the session.
+pub async fn from_session() -> String {
+    let current = env!("CARGO_PKG_VERSION");
+    let Some(tag) = latest().await else { return "Couldn't reach GitHub to check for a new release.".into() };
+    let v = tag.trim_start_matches('v');
+    if !newer(&tag, current) {
+        return format!("zerd {current} is the latest.");
+    }
+    let Some(exe) = installed_binary() else { return format!("zerd {v} is out, but this is a development build; update it with git pull and cargo build.") };
+    if install(&exe, true) {
+        format!("Updated to zerd {v}. It takes over the next time you start zerd (/exit, then zerd; zerd -c picks this session back up).")
+    } else {
+        format!("zerd {v} is out, but installing it failed. Run zerd update in a terminal to see why.")
+    }
 }
 
 #[cfg(test)]

@@ -61,7 +61,7 @@ Checks your setup and prints one line per problem, each with its fix. Exits 1 if
 
 ### `zerd update`
 
-Checks GitHub for the latest release and, if it's newer, installs it into the folder the current `zerd` lives in. zerd also checks by itself once a day when you open it in a terminal, and asks `Update now? [Y/n]` before the session starts. Yes installs and restarts on the new version. One-shot runs, `--json`, `--rpc` and builds from source never check. Set `ZERD_NO_UPDATE_CHECK=1` to turn the launch check off.
+Checks GitHub for the latest release and, if it's newer, installs it into the folder the current `zerd` lives in. zerd also checks by itself once a day when you open it in a terminal, and asks `Update now? [Y/n]` before the session starts. Yes installs and restarts on the new version. One-shot runs, `--json`, `--rpc` and builds from source never check. Inside a session, `/update` installs the new version quietly; it takes over the next time you start zerd. Set `ZERD_NO_UPDATE_CHECK=1` to turn the launch check off.
 
 ### `zerd graph <action> [name] [to|direction] [depth]`
 

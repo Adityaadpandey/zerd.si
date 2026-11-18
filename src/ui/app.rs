@@ -1123,6 +1123,12 @@ impl Cli {
                 }
             }
             "/layout" => uprintln!("{}", crate::ui::layout::command(&args)),
+            "/update" => {
+                self.tui.start_turn("Checking for an update");
+                let msg = crate::util::update::from_session().await;
+                self.tui.end_turn();
+                uprintln!("{}", paint(&format!("  {msg}"), MUTED));
+            }
             "/verbose" => uprintln!("{}", paint(&format!("  output: {}", if self.tui.toggle_quiet() { "quiet" } else { "verbose" }), MUTED)),
             "/challenge" => {
                 if args.is_empty() {
