@@ -204,7 +204,6 @@ pub struct Screen {
     copied_at: Option<Instant>,
     /// F2 turns mouse capture off so the terminal's own selection works.
     pub mouse_on: bool,
-    side_seen: bool,
     pub question: Option<(String, Vec<String>)>,
     pub line_mode: bool,
     main_rect: Rect,
@@ -236,7 +235,6 @@ impl Screen {
             last_move: Instant::now(),
             copied_at: None,
             mouse_on: true,
-            side_seen: false,
             question: None,
             line_mode: false,
             main_rect: Rect::default(),
@@ -260,9 +258,9 @@ impl Screen {
         self.edge = 0;
     }
 
+    /// On from the start on a wide enough terminal; F3 or `/layout side off` hides it.
     fn side_on(&mut self, cols: usize) -> bool {
-        self.side_seen = self.side_seen || self.tui.side_has().iter().any(|b| *b);
-        cols >= MIN_COLUMNS && self.side_seen && super::layout::shown("side")
+        cols >= MIN_COLUMNS && super::layout::shown("side")
     }
 
     fn main_width(&mut self, cols: usize) -> usize {
@@ -808,6 +806,9 @@ impl Screen {
         let shown: Vec<usize> = (0..4).filter(|k| has[*k]).collect();
         f.render_widget(Paragraph::new("").style(Style::default().bg(hx(BG_PANEL))), r);
         if shown.is_empty() {
+            let hint = " Files zerd reads and changes, and the commands it runs, show up here.";
+            let r = Rect::new(r.x, r.y + 1, r.width, 3.min(r.height.saturating_sub(1)));
+            f.render_widget(Paragraph::new(hint).wrap(ratatui::widgets::Wrap { trim: false }).style(fg(MUTED).bg(hx(BG_PANEL))), r);
             return;
         }
         // sections share the height equally, with a rule between neighbours
