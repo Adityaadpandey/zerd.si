@@ -37,6 +37,36 @@ pub fn asks_how(message: &str) -> bool {
     let t = typed(message).trim();
     t.ends_with('?') || R.get_or_init(|| lit_i(r"^(?:so\s+|well\s+|ok\s+)?(?:how|what|why|which|should|would|could|can|is|are|do|does)\b")).is_match(t)
 }
+/// Questions riding along with a work request, which the final answer has to cover. A paste, then "update the site and
+/// write the post\n\nalso tell me how can i make my site better for recruiters" got the edits and no word on the
+/// recruiters, three times in a row. Only the person's own short blocks after a paste are read, and a request that is
+/// one question as a whole returns nothing (it is answered anyway).
+pub fn side_questions(message: &str) -> Vec<String> {
+    static Q: OnceLock<Re> = OnceLock::new();
+    let q = Q.get_or_init(|| lit_i(r"^(?:and\s+|so\s+)?(?:tell me|how|what|why|which|should|could you tell|can you tell|explain|suggest|give me (?:ideas|advice|tips))\b"));
+    let blocks: Vec<&str> = message.split("\n\n").map(str::trim).filter(|b| !b.is_empty()).collect();
+    let own: Vec<&str> = if message.chars().count() < 600 { blocks } else {
+        let mut tail: Vec<&str> = blocks.into_iter().rev().take_while(|b| b.chars().count() < 600).collect();
+        tail.reverse();
+        tail
+    };
+    // "write the post also tell me how ..." on one line is two asks, so "also" starts a new part too
+    let mut parts: Vec<String> = vec![];
+    for line in own.iter().flat_map(|b| b.lines()) {
+        let low = line.to_ascii_lowercase();
+        let mut at = 0;
+        for (i, _) in low.match_indices("also ").filter(|(i, _)| *i == 0 || low.as_bytes()[i - 1] == b' ') {
+            parts.push(line[at..i].to_string());
+            at = i + 5;
+        }
+        parts.push(line[at..].to_string());
+    }
+    let parts: Vec<String> = parts.into_iter().map(|p| p.trim().trim_end_matches(|c| ",.;".contains(c)).to_string()).filter(|p| p.len() > 3).collect();
+    if parts.len() < 2 {
+        return vec![];
+    }
+    parts.into_iter().filter(|p| p.ends_with('?') || q.is_match(p)).collect()
+}
 /// What the user actually typed. `@spec.md` inlines the whole file after the text, so every keyword check (review? fix?
 /// hard task? one agent?) must read this and not the full message: a spec that says "review" somewhere must not turn
 /// "implement this plan" into a review run.
@@ -146,6 +176,15 @@ pub fn length_hint(request: &str, tier: &str, will_change: bool, reviewing: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_question_inside_a_work_request_is_kept() {
+        let paste = "# Speculative RAG\n\n".to_string() + &"The README body. ".repeat(80);
+        let msg = format!("{paste}\n\nthis is the readme of speculative rag we have update the things over the places pls also if there has been no blog of this write that up too\n\nalso tell me how can i make my site more better for the recruiter to actuall get it");
+        assert_eq!(side_questions(&msg), ["tell me how can i make my site more better for the recruiter to actuall get it"]);
+        assert!(side_questions("how do i make this better").is_empty()); // the whole request is the question
+        assert!(side_questions("make the status line smaller and commit").is_empty());
+    }
+
     #[test]
     fn content_advice_is_not_a_code_review() {
         assert!(!about_code_review("well i am asking about the content how can we make it better so people genuinely read the site"));
