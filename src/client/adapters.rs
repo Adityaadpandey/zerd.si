@@ -165,6 +165,43 @@ pub fn compat_messages(mut messages: Vec<Value>, compat: &crate::config::Compat)
     messages
 }
 
+/// Images ride in a user message's text as `[image: /path]` lines, which is what the session saves, and each provider
+/// sends them its own way. This loads the ones still on disk as (media type, base64). Example: a message ending in
+/// `[image: /Users/me/Library/Application Support/zerd/images/1731912000-shot.png]` gives ("image/png", "iVBOR...").
+/// ponytail: images are read and encoded again on every request; cache them if long image-heavy sessions feel slow.
+pub fn message_images(text: &str) -> Vec<(String, String)> {
+    use base64::Engine;
+    text.lines()
+        .filter_map(|l| l.trim().strip_prefix("[image: ")?.strip_suffix(']'))
+        .filter_map(|p| Some((image_type(p)?.to_string(), base64::engine::general_purpose::STANDARD.encode(std::fs::read(p).ok()?))))
+        .collect()
+}
+
+/// The media type for an image file zerd can send, by extension; None for anything else.
+pub fn image_type(path: &str) -> Option<&'static str> {
+    match path.rsplit('.').next()?.to_ascii_lowercase().as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// OpenAI-style user messages with their images as `image_url` parts after the text (or after a cache-marked text part).
+fn openai_images(messages: &mut [Value]) {
+    for m in messages.iter_mut().filter(|m| m["role"] == "user") {
+        let text = m["content"].as_str().or_else(|| m["content"][0]["text"].as_str()).unwrap_or("").to_string();
+        let images = message_images(&text);
+        if images.is_empty() {
+            continue;
+        }
+        let mut parts = m["content"].as_array().cloned().unwrap_or_else(|| vec![json!({"type": "text", "text": text})]);
+        parts.extend(images.into_iter().map(|(t, d)| json!({"type": "image_url", "image_url": {"url": format!("data:{t};base64,{d}")}})));
+        m["content"] = json!(parts);
+    }
+}
+
 /// Anthropic-style cache marks on an OpenAI-shaped history: one on the system prompt (it never changes) and one on the
 /// newest user or tool message (so the next turn reads everything up to here from cache). The marked message's text
 /// has to become a one-part list, because a plain string has nowhere to carry the mark.
@@ -289,6 +326,7 @@ impl Adapter for OpenAIChatAdapter {
             if self.compat.cache_control.unwrap_or(self.base_url.contains("openrouter.ai") && req.model.starts_with("anthropic/")) {
                 messages = cache_marks(messages);
             }
+            openai_images(&mut messages);
             let mut body = json!({"model": req.model, "messages": messages, "stream": true});
             let b = body.as_object_mut().unwrap();
             if self.compat.stream_usage != Some(false) { b.insert("stream_options".into(), json!({"include_usage": true})); }
@@ -453,7 +491,9 @@ pub fn to_anthropic_messages(messages: &[Value]) -> (Option<Vec<Value>>, Vec<Val
             _ => {
                 settle(&mut out, &mut pending);
                 let t = m["content"].as_str().filter(|s| !s.is_empty()).unwrap_or("(empty)");
-                push_user_blocks(&mut out, vec![json!({"type": "text", "text": t})]);
+                let mut blocks = vec![json!({"type": "text", "text": t})];
+                blocks.extend(message_images(t).into_iter().map(|(ty, d)| json!({"type": "image", "source": {"type": "base64", "media_type": ty, "data": d}})));
+                push_user_blocks(&mut out, blocks);
             }
         }
     }
@@ -597,8 +637,12 @@ pub fn to_responses_input(messages: &[Value]) -> (String, Vec<Value>) {
                     items.push(json!({"type": "function_call", "call_id": tc["id"], "name": tc["function"]["name"], "arguments": args}));
                 }
             }
-            _ => items.push(json!({"type": "message", "role": "user",
-                                   "content": [{"type": "input_text", "text": m["content"].as_str().filter(|s| !s.is_empty()).unwrap_or("(empty)")}]})),
+            _ => {
+                let t = m["content"].as_str().filter(|s| !s.is_empty()).unwrap_or("(empty)");
+                let mut parts = vec![json!({"type": "input_text", "text": t})];
+                parts.extend(message_images(t).into_iter().map(|(ty, d)| json!({"type": "input_image", "image_url": format!("data:{ty};base64,{d}")})));
+                items.push(json!({"type": "message", "role": "user", "content": parts}));
+            }
         }
     }
     let ins = if instructions.is_empty() { "You are a helpful coding agent.".to_string() } else { instructions.join("\n\n") };
@@ -727,6 +771,22 @@ impl Adapter for CodexResponsesAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn images_go_out_the_way_each_provider_reads_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("shot.png");
+        std::fs::write(&png, b"\x89PNG").unwrap();
+        let msg = json!({"role": "user", "content": format!("fix this\n[image: {}]\n[image: /gone/old.png]", png.display())});
+        let mut chat = vec![msg.clone()];
+        openai_images(&mut chat);
+        assert_eq!(chat[0]["content"][1]["image_url"]["url"], "data:image/png;base64,iVBORw==");
+        assert_eq!(chat[0]["content"].as_array().unwrap().len(), 2); // the missing file stays as text only
+        let (_, anth) = to_anthropic_messages(&[msg.clone()]);
+        assert_eq!(anth[0]["content"][1]["source"]["media_type"], "image/png");
+        let (_, items) = to_responses_input(&[msg]);
+        assert_eq!(items[0]["content"][1]["type"], "input_image");
+    }
 
     #[test]
     fn anthropic_orphans_patched() {
