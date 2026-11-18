@@ -801,12 +801,6 @@ impl Tui {
         self.st.lock().unwrap().side_panel = on;
     }
 
-    /// Does the side panel have anything to show yet?
-    pub fn side_has(&self) -> [bool; 4] {
-        let s = self.st.lock().unwrap();
-        [!(s.agents.is_empty() && s.agent_log.is_empty()), !s.read_files.is_empty(), !s.written.is_empty(), !s.commands.is_empty()]
-    }
-
     pub fn snapshot_side(&self) -> SideData {
         let s = self.st.lock().unwrap();
         let now = Instant::now();
