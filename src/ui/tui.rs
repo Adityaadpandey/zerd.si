@@ -278,6 +278,8 @@ struct AgentRow {
 
 #[derive(Clone)]
 struct DoneAgent {
+    /// The tool call that ran it, so its result line can be left to the panel.
+    id: String,
     agent: String,
     goal: String,
     ok: bool,
@@ -668,7 +670,7 @@ impl Tui {
                 if let Some(mut a) = s.agents.remove(call_id) {
                     s.agent_order.retain(|x| x != call_id);
                     a.tokens = info["tokens"].as_i64().unwrap_or(a.tokens);
-                    s.agent_log.push(DoneAgent { agent: a.agent, goal: a.goal, ok: info["ok"].as_bool().unwrap_or(true), seconds: a.started.elapsed().as_secs_f64(), tools: a.tools, tokens: a.tokens });
+                    s.agent_log.push(DoneAgent { id: call_id.into(), agent: a.agent, goal: a.goal, ok: info["ok"].as_bool().unwrap_or(true), seconds: a.started.elapsed().as_secs_f64(), tools: a.tools, tokens: a.tokens });
                 }
             }
             _ => {}
@@ -700,8 +702,9 @@ impl Tui {
         };
         self.track(name, &args, success, metadata, diff);
         let (summary, preview) = summarize_result(name, success, output, error, metadata, exit_code, &args);
-        if quiet && success && name == "read_file" && self.st.lock().unwrap().side_panel {
-            return; // the panel's READ list shows it
+        if quiet && success && self.on_panel(call_id, name, &args) {
+            self.st.lock().unwrap().header_done = false;
+            return; // the side panel already lists it, so the conversation stays for what zerd says
         }
         let is_edit = matches!(name, "edit" | "write_file") && success && diff.is_some();
         let plain_summary = summary.trim_start_matches("✗ ").to_string();
@@ -737,6 +740,20 @@ impl Tui {
             }
         }
         self.print_above(&rows.iter().map(|r| format!(" {} {r}", paint("│", color))).collect::<Vec<_>>().join("\n"));
+    }
+
+    /// Is this call already listed on the side panel? Reads, writes, commands and sub-agents are, when their section
+    /// is showing. `grep` or `ls` aren't (the panel skips them), and a failure always prints, since that's news.
+    fn on_panel(&self, call_id: &str, name: &str, args: &Map<String, Value>) -> bool {
+        let s = self.st.lock().unwrap();
+        let part = match name {
+            "read_file" => "read",
+            "edit" | "write_file" => "written",
+            "shell" if !is_quiet_command(args.get("command").and_then(Value::as_str).unwrap_or("").trim()) => "commands",
+            _ if s.agents.contains_key(call_id) || s.agent_log.iter().any(|a| a.id == call_id) => "agents",
+            _ => return false,
+        };
+        s.side_panel && super::layout::shown(part)
     }
 
     fn note_read(s: &mut State, path: String) {
@@ -888,7 +905,6 @@ impl Drop for Tui {
     }
 }
 
-#[allow(dead_code)]
 pub fn is_quiet_command(cmd: &str) -> bool {
     cmd.split_whitespace().next().map_or(false, |c| QUIET_COMMANDS.contains(&c))
 }
@@ -899,6 +915,21 @@ mod tests {
 
     fn args(v: Value) -> Map<String, Value> {
         v.as_object().cloned().unwrap()
+    }
+
+    #[test]
+    fn calls_the_side_panel_lists_stay_out_of_the_conversation() {
+        let t = Tui::new(Path::new("/tmp"));
+        let shell = |c: &str| args(json!({"command": c}));
+        t.set_side_panel(true);
+        assert!(t.on_panel("1", "write_file", &args(json!({"path": "a.rs"}))));
+        assert!(t.on_panel("2", "shell", &shell("cargo test")));
+        assert!(!t.on_panel("3", "shell", &shell("grep -rn foo src"))); // the panel skips grep, so it still prints
+        assert!(!t.on_panel("4", "graph", &args(json!({}))));
+        t.agent_progress("5", &json!({"kind": "start", "agent": "scout", "goal": "map it"}));
+        assert!(t.on_panel("5", "scout", &args(json!({}))));
+        t.set_side_panel(false); // narrow terminal or F3: nothing is on the right, so everything prints
+        assert!(!t.on_panel("2", "shell", &shell("cargo test")));
     }
 
     #[test]
