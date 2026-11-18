@@ -3,6 +3,8 @@ title: "Verification"
 description: "How zerd picks checks, knows whose failure it is, and catches breakage your tests can't see."
 ---
 
+zerd verifies an AI code change by running the project's own checks on the files that changed, telling you whose failure it is, and catching breakage your tests cannot see.
+
 ## Checks on the files that changed
 
 After edits, zerd picks checks for the changed files only, never a whole build:

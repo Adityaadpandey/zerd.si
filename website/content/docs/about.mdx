@@ -1,0 +1,39 @@
+---
+title: "About zerd and who writes it"
+description: "Who builds zerd, how it is made, where the source lives, and how to report a problem or get in touch."
+---
+
+zerd is a terminal AI coding agent: it edits your code, runs the project's own checks on what it changed, sends the diff to a second model to review, and tells you what it could not verify. It is one native Rust binary, so there is no Python or Node to install first.
+
+## Who writes zerd
+
+zerd is built and maintained by one person, [Aditya Dutt Pandey](https://lab.adpandey.dev), who publishes the source and the releases on GitHub as [Adityaadpandey](https://github.com/Adityaadpandey).
+
+Everything published on this site is written by that author. The pages are not generated summaries of other people's work: each one describes a behaviour that is in the source, and the claims are checkable against the repository.
+
+## How it is made
+
+- **The harness is the product.** The checks, the reviews, the sandbox and the memory are written in Rust, so a cheaper model can do real engineering work without the harness handing it the rails.
+- **Every claim is checked.** When zerd mentions a file or a line, that path is looked up on disk. A path that does not exist is a defect in the answer, not a formatting detail.
+- **The measurements are real.** The benchmark numbers on these pages come from running zerd against real PostgreSQL and Redis, not mocks. Where a comparison rests on one run, the page says so.
+- **The source is the documentation.** These pages are hand-written and reviewed alongside the code they describe.
+
+## Where things live
+
+- **Source and issues:** [github.com/Adityaadpandey/zerd.si](https://github.com/Adityaadpandey/zerd.si). Issues and pull requests are the way to report a problem or propose a change.
+- **Releases:** [github.com/Adityaadpandey/zerd.si/releases](https://github.com/Adityaadpandey/zerd.si/releases), including checksums for every binary.
+- **This site:** the docs you are reading, plus a plain-markdown version of every page at the same URL with `.md` on the end, for tools that read text better than HTML.
+
+## Reporting a problem
+
+Open an issue on the [repository](https://github.com/Adityaadpandey/zerd.si/issues). A report that says what you ran, what you expected and what happened, with the output, is the fastest way to get it fixed.
+
+If you find a security issue, please follow the [security policy](https://github.com/Adityaadpandey/zerd.si/blob/main/SECURITY.md) instead of opening a public issue.
+
+## Licensing
+
+zerd is source-available, not open source. It is free to run for any purpose, including commercial use. You can read the source, but you cannot copy, modify or redistribute it. The [full terms](/docs/license) are on their own page.
+
+## What zerd is not there yet
+
+Said plainly, so you know what you are getting: no image input, an OS sandbox on macOS only, token counts that are estimated rather than counted exactly, and benchmarks small enough that they are a sanity check rather than a leaderboard. The [Limits](/docs/limits) page has the full list.
