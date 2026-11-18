@@ -4,13 +4,14 @@
 //! those reads in the conversation instead).
 use std::sync::Mutex;
 
-/// (key, what it is). The first four are side-panel sections; `side` hides the panel as a whole.
+/// (key, what it is). The middle five are side-panel sections; `side` hides the panel as a whole.
 pub const PARTS: &[(&str, &str)] = &[
     ("side", "the whole right-hand panel"),
+    ("tasks", "side panel: the todo list zerd is working through"),
     ("agents", "side panel: sub-agents running and finished"),
     ("read", "side panel: files zerd has read"),
     ("written", "side panel: files it changed, with +/- counts"),
-    ("commands", "side panel: shell commands it ran"),
+    ("commands", "side panel: commands and searches it ran"),
     ("hints", "the shortcut hint at the right end of the top bar"),
 ];
 
