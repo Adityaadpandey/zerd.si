@@ -200,7 +200,10 @@ pub fn summarize_result(name: &str, success: bool, output: &str, error: Option<&
         }
     };
     if !success {
-        let (lines, _) = first_lines(error.filter(|e| !e.is_empty()).unwrap_or(if output.is_empty() { "failed" } else { output }).trim(), 3);
+        let text = error.filter(|e| !e.is_empty()).unwrap_or(if output.is_empty() { "failed" } else { output });
+        // "Invalid parameters: ... Received: {2000 chars of the model's own JSON}" is for the model; people get the reason.
+        let text = text.split(" Received: ").next().unwrap_or(text);
+        let (lines, _) = first_lines(text.trim(), 3);
         return (format!("✗ {}", lines.first().cloned().unwrap_or_else(|| "failed".into())), lines.into_iter().skip(1).collect());
     }
     let int = |k: &str| md.get(k).and_then(Value::as_i64);
@@ -952,6 +955,8 @@ mod tests {
         let (s, p) = summarize_result("grep", true, "a:1:x\nb:2:y", None, &args(json!({"matches": 2, "files_with_matches": 2})), None, &Map::new());
         assert_eq!((s.as_str(), p.len()), ("Found 2 matches in 2 files", 2));
         assert!(summarize_result("shell", false, "", Some("boom\nmore"), &Map::new(), Some(1), &Map::new()).0.starts_with("✗ boom"));
+        let bad = "Invalid parameters: Parameter 'tasks.0.id': Field required. Received: {\"tasks\":[]}";
+        assert_eq!(summarize_result("parallel_tasks", false, "", Some(bad), &Map::new(), None, &Map::new()).0, "✗ Invalid parameters: Parameter 'tasks.0.id': Field required.");
     }
 
     #[test]
