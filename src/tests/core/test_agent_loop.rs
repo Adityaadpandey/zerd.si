@@ -128,6 +128,11 @@ async fn a_guessed_folder_opens_the_only_file_with_that_name() {
     // two files share the name: picking one would be a guess, so it still asks
     let r = reg.invoke("read_file", json!({"path": "src/index.ts"}), d, &HookSystem::new(&c), None, "s1").await;
     assert!(!r.success && r.error.unwrap_or_default().contains("Files with that name"));
+    // right folder, wrong extension, even under node_modules (which the repo-wide search skips)
+    std::fs::create_dir_all(d.join("node_modules/next/docs")).unwrap();
+    std::fs::write(d.join("node_modules/next/docs/use-client.md"), "'use client'\n").unwrap();
+    let r = reg.invoke("read_file", json!({"path": "node_modules/next/docs/use-client.mdx"}), d, &HookSystem::new(&c), None, "s1").await;
+    assert!(r.success && r.output.contains("Opened use-client.md instead") && r.output.contains("'use client'"), "{}", r.output);
 }
 
 #[tokio::test]
