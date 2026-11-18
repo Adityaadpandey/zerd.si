@@ -23,6 +23,13 @@ pub const SIDE_WIDTH: usize = 38;
 pub const MIN_COLUMNS: usize = 100; // narrower terminals get the conversation only
 pub const MARGIN: usize = 2;
 
+/// Columns the conversation gets on a terminal this wide: what's left after the margin and, when it shows, the side
+/// panel. Text printed before the first frame (the welcome, a resumed session) wraps to this too, so it fits the pane.
+pub fn pane_width(cols: usize) -> usize {
+    let side = if cols >= MIN_COLUMNS && super::layout::shown("side") { SIDE_WIDTH + 1 } else { 0 };
+    cols.saturating_sub(MARGIN + side + 1).max(20)
+}
+
 fn hx(h: &str) -> Color {
     let h = h.trim_start_matches('#');
     let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap_or(255);
@@ -263,10 +270,6 @@ impl Screen {
         cols >= MIN_COLUMNS && super::layout::shown("side")
     }
 
-    fn main_width(&mut self, cols: usize) -> usize {
-        let side = if self.side_on(cols) { SIDE_WIDTH + 1 } else { 0 };
-        cols.saturating_sub(MARGIN + side + 1).max(20)
-    }
 
     // -- scrolling, selecting, copying -----------------------------------------------------------------------------
     /// Positive goes back in time. Scrolling past the newest line goes back to following.
@@ -663,7 +666,7 @@ impl Screen {
         }
         let side = self.side_on(cols);
         self.tui.set_side_panel(side);
-        let main_w = self.main_width(cols).min(cols.saturating_sub(MARGIN)).max(10);
+        let main_w = pane_width(cols).min(cols.saturating_sub(MARGIN)).max(10);
         sink::set_width(main_w);
         self.tr.sync(main_w);
 
