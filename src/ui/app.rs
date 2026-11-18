@@ -108,6 +108,14 @@ fn home_short(p: &Path) -> String {
     p.to_string_lossy().replacen(&home, "~", 1)
 }
 
+/// Did the person type this "user" message? The agent loop also slips its own nudges in as user turns ("Budget check:
+/// 17 of 25 tool rounds used...", "[background job 8 ... failed]"), and a replay should not show those as if you said
+/// them. What you typed is in the trace: each turn's `task_start` keeps its request, and a note sent mid-turn is
+/// marked "[the user added". With no requests in the trace (an old session) everything shows, as before.
+fn typed_by_person(text: &str, requests: &[String]) -> bool {
+    requests.is_empty() || text.starts_with("[the user added") || requests.iter().any(|r| !r.is_empty() && text.starts_with(r.as_str()))
+}
+
 // ---------------------------------------------------------------------------------------------------- prompts
 
 /// One keypress from a numbered menu. Enter takes the first option, Esc or Ctrl+C the last.
@@ -937,14 +945,18 @@ impl Cli {
         let Some(snap) = PersistenceManager::new().load_session(id) else { return false };
         self.restore_into_session(&snap, true).await;
         // draw the conversation again so the transcript shows what was said
-        let cwd = self.config.get().cwd.clone();
-        let _ = cwd;
+        let requests: Vec<String> = self.agent().session.tracer.events.lock().unwrap().iter()
+            .filter(|e| e["event"] == "task_start")
+            .map(|e| e["request"].as_str().unwrap_or("").to_string())
+            .collect();
         for m in &snap.messages {
             match m["role"].as_str().unwrap_or("") {
                 "user" => {
                     let c = m["content"].as_str().unwrap_or("");
                     if c.starts_with(crate::context::manager::COMPACT_HEAD) {
                         uprintln!("{}", italic(&paint("  ✦ compacted · earlier messages are summarised for the model", MUTED)));
+                    } else if !typed_by_person(c, &requests) {
+                        // a nudge zerd sent the model, not something the person typed
                     } else {
                         self.tui.echo_user(c.split("\n\n---\n").next().unwrap_or(""));
                     }
@@ -1554,6 +1566,17 @@ fn _unused(_: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replay_skips_what_zerd_told_the_model() {
+        let asked = vec!["fix the login bug".to_string(), "pls cont".to_string()];
+        assert!(typed_by_person("fix the login bug\n\n---\n[Orientation: ...]", &asked)); // the request with zerd's notes after it
+        assert!(typed_by_person("pls cont", &asked));
+        assert!(typed_by_person("[the user added, while you were working:] /jobs", &asked));
+        assert!(!typed_by_person("Budget check: 17 of 25 tool rounds used. Put every lookup...", &asked));
+        assert!(!typed_by_person("[background job 8 `git clone ...` failed; last output:]\n...", &asked));
+        assert!(typed_by_person("Budget check: 3 of 9", &[])); // no trace to go by: show it rather than lose your words
+    }
 
     #[test]
     fn plans_have_steps() {
