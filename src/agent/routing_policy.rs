@@ -23,6 +23,13 @@ pub fn reviewy() -> &'static Re {
     static R: OnceLock<Re> = OnceLock::new();
     R.get_or_init(|| lit_i(r"\b(review|audit|critique)\b"))
 }
+/// Does the person's own text point at code or changes to check? The review pipeline needs this as well as the orient
+/// model's "review": that model once filed "how can we make the content better so people read the site" as a review,
+/// and the person got "Code review: No issues found" instead of an answer.
+pub fn about_code_review(message: &str) -> bool {
+    static R: OnceLock<Re> = OnceLock::new();
+    R.get_or_init(|| lit_i(r"\b(review|audit|critique|diff|pr|pull request|changes?|commits?|code|bugs?|look over|check (?:it|this|my|the))\b")).is_match(typed(message))
+}
 /// What the user actually typed. `@spec.md` inlines the whole file after the text, so every keyword check (review? fix?
 /// hard task? one agent?) must read this and not the full message: a spec that says "review" somewhere must not turn
 /// "implement this plan" into a review run.
@@ -132,6 +139,11 @@ pub fn length_hint(request: &str, tier: &str, will_change: bool, reviewing: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn content_advice_is_not_a_code_review() {
+        assert!(!about_code_review("well i am asking about the content how can we make it better so people genuinely read the site"));
+        assert!(about_code_review("review the change i have") && about_code_review("look over my diff") && about_code_review("is this PR ok"));
+    }
     #[test]
     fn tiers() {
         assert_eq!(classify("debug the flaky test").0, "strong");

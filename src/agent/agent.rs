@@ -490,7 +490,7 @@ impl Agent {
         // The small model reads the whole request first and says what job it is. Words are only the fallback for when it
         // is down, because "we review submissions" inside a pasted job post is not a request to review code.
         let oriented = self.orient(message).await;
-        let reviewing = oriented.as_ref().map_or_else(|| is_reviewy(ask), |o| o.intent == "review");
+        let reviewing = oriented.as_ref().map_or_else(|| is_reviewy(ask), |o| o.intent == "review" && crate::agent::routing_policy::about_code_review(ask));
         let forced = std::mem::take(&mut self.forced_skills); // set by a typed /skill-name, for this request only
         let mut matched = forced.clone();
         matched.extend(match_skills(&self.session.skills, ask, 4).into_iter().filter(|p| !forced.iter().any(|f| f.name == p.name) && (reviewing || p.name != "code-review")));

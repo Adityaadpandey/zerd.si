@@ -92,6 +92,7 @@ REPO MAP:
 Fields:
 "intent": "change" (the user wants files edited or created), "review" (check code, a diff or a PR and report), "investigate" (find a cause or trace how something works), "explain" (answer a question about the code), "git" (commit, branch, push, status), or "other".
   Judge by what the user wants done, not by single words: "review the change i have" is a review; "why does checkout double charge" is investigate even though nothing is named.
+  "review" means checking code or changes for defects. Advice on making writing, a design or a site better ("how do i make the content better so people read it") is "explain" or "other", even when it says "better" or "improve".
 "tier": "fast" (trivial and well-defined: rename, typo, where is X, run a command), "default" (ordinary work), or "strong" (hard: a bug with an unknown cause, concurrency, security or money paths, a change across several parts, a design decision).
 "touches": what the finished work should change: "code" (source files: a bug fix or feature), "docs" (markdown, comments or notes only), "config" (CI, build, env or infra files), or "none" (nothing is edited).
 "where": up to 5 paths or folders from the map where the answer most likely lives (only ones that appear in the map; [] if you cannot tell).
