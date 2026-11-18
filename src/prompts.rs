@@ -100,7 +100,14 @@ fn built_prompt(config: &Config, user_memory: Option<&str>, tools: &[Arc<dyn Too
     parts.into_iter().filter(|p| !p.trim().is_empty()).collect::<Vec<_>>().join("\n\n")
 }
 
+/// Who zerd is, for when a user asks "who are you" or "who made you". Kept to one line so it costs almost nothing.
+const MAKER: &str = "Your name is zerd. You were built by Aditya Dutt Pandey (https://lab.adpandey.dev). When asked who you are or who made you, say that plainly; you are not the model underneath, which only powers you";
+
 fn identity_section() -> String {
+    format!("{MAKER}.\n\n{}", identity_body())
+}
+
+fn identity_body() -> String {
     "You are **Zerd**, a terminal coding agent working with the user inside their repository. Act like a senior engineer who owns the outcome: inspect the real code, make the smallest complete change, verify it, and say plainly what worked and what did not. When the task is clear, act. If it is not, read the repo first and ask the user only what the repo cannot answer".into()
 }
 
@@ -380,7 +387,7 @@ fn pi_prompt(config: &Config, tools: &[Arc<dyn Tool>], skills: &[Skill]) -> Stri
     g.extend(EXECUTION.iter().map(|s| s.to_string()));
     g.extend(model_notes(config.model_name()));
     let mut prompt = format!(
-        "You are an expert coding assistant operating inside zerd, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.\n\nAvailable tools:\n{listing}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n\nGuidelines:\n{}",
+        "{MAKER}. You are an expert coding assistant; you help users by reading files, executing commands, editing code, and writing new files.\n\nAvailable tools:\n{listing}\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.\n\nGuidelines:\n{}",
         g.iter().map(|x| format!("- {x}")).collect::<Vec<_>>().join("\n")
     );
     let context: Vec<&String> = [&config.developer_instructions, &config.user_instructions].into_iter().flatten().collect();
@@ -420,6 +427,7 @@ mod tests {
         std::fs::write(dir.path().join(".zerd/APPEND_SYSTEM.md"), "Answer in Hindi.").unwrap();
         let p = get_system_prompt(&cfg, None, &[], &[]);
         assert!(p.contains("zerd") && p.ends_with("Answer in Hindi."));
+        assert!(p.starts_with("Your name is zerd. You were built by Aditya Dutt Pandey"));
         std::fs::write(dir.path().join(".zerd/SYSTEM.md"), "You are a pirate.").unwrap();
         assert_eq!(get_system_prompt(&cfg, None, &[], &[]), "You are a pirate.\n\nAnswer in Hindi.");
     }
