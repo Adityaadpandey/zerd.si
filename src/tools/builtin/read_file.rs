@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::any::Any;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const WHOLE_FILE_LINES: usize = 400;
@@ -203,6 +203,17 @@ impl Tool for ReadFileTool {
         // A guessed folder with the right file name ("src/routes/auth.ts" for "apps/server/src/routes/auth.ts"): when
         // exactly one file has that name it is the one meant, so open it and say so instead of costing a round.
         let mut moved = String::new();
+        // Right folder, wrong extension: "use-client.mdx" when the file is "use-client.md", or "config.yml" for
+        // "config.yaml". Look next to it first; that also works in node_modules, which the repo-wide search skips.
+        if !path.exists() {
+            if let (Some(dir), Some(stem)) = (path.parent(), path.file_stem()) {
+                let twins: Vec<PathBuf> = std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()).filter(|f| f.is_file() && f.file_stem() == Some(stem)).collect();
+                if let [only] = twins.as_slice() {
+                    moved = format!("[{p} does not exist. Opened {} instead.]\n", only.file_name().unwrap_or_default().to_string_lossy());
+                    path = only.clone();
+                }
+            }
+        }
         if !path.exists() {
             match crate::util::search::similar(&inv.cwd, &path, &cfg.forbidden_paths) {
                 (same, true) if same.len() == 1 => {
