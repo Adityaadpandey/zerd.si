@@ -4,6 +4,17 @@ import { SITE } from "@/lib/site";
 export const dynamic = "force-static";
 
 // Everything public is open, AI crawlers included: being quoted by answer engines is the point.
+// Only the API is closed, because it is called by the page, not read by a crawler.
 export default function robots(): MetadataRoute.Robots {
-  return { rules: [{ userAgent: "*", allow: "/", disallow: "/api/" }], sitemap: `${SITE}/sitemap.xml`, host: SITE };
+  return {
+    rules: [
+      {
+        userAgent: "*",
+        allow: "/",
+        disallow: ["/api/"],
+      },
+    ],
+    sitemap: `${SITE}/sitemap.xml`,
+    host: SITE,
+  };
 }
