@@ -85,7 +85,7 @@ export const DOC_SEO: Record<string, Seo> = {
   },
   "files-and-env": {
     title: "zerd files and environment variables reference",
-    description: "Every folder and file zerd reads or writes, and every environment variable it looks at, per operating system.",
+    description: "Every folder and file zerd reads or writes, every environment variable it looks at, and how they differ per operating system.",
     keywords: ["environment variables", "zerd data folder"],
   },
   tools: {
@@ -95,7 +95,7 @@ export const DOC_SEO: Record<string, Seo> = {
   },
   "skills-and-agents": {
     title: "Skills and sub-agents for a terminal coding agent",
-    description: "Write markdown skills the model can load, reusable slash commands, and sub-agents zerd can hand work to.",
+    description: "Write markdown skills the model can load, reusable slash commands, and sub-agents that zerd can hand work to.",
     keywords: ["agent skills", "sub-agents", "custom slash commands", "Claude Code skills alternative"],
   },
   extending: {
@@ -153,6 +153,11 @@ export const DOC_SEO: Record<string, Seo> = {
     description: "zerd is source-available: free to run for any purpose, commercial use included, but you cannot copy, modify or redistribute the source.",
     keywords: ["source-available license", "free coding agent"],
   },
+  about: {
+    title: "About zerd: who builds it and how",
+    description: "Who writes zerd, how the coding agent is built and measured, where the source and releases live, and how to report a problem.",
+    keywords: ["about zerd", "who makes zerd", "zerd coding agent author", "zerd source code"],
+  },
 };
 
 // The full set of tags for one page. Next replaces `openGraph` and `twitter` wholesale when a page sets
@@ -166,6 +171,10 @@ export function pageMeta(o: { path: string; title: string; description: string; 
     description,
     keywords,
     alternates: { canonical: path },
+    // Each page says it is indexable. The root layout used to say this for everyone, but that also put
+    // `index, follow` on the 404 next to Next's own `noindex`, and two conflicting robots tags on one
+    // page is what Google reads as "this URL is indexable" for URLs that should not be indexed.
+    robots: { index: true, follow: true, googleBot: { "max-snippet": -1, "max-image-preview": "large" } },
     openGraph: { type, siteName: NAME, locale: "en_US", url: path, title: `${title} · ${NAME}`, description, images },
     twitter: { card: "summary_large_image", title: `${title} · ${NAME}`, description, images },
   };
