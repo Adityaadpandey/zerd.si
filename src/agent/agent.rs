@@ -623,6 +623,11 @@ impl Agent {
         if !hint.is_empty() {
             message_for_model.push_str(&format!("\n\n[{hint}]"));
         }
+        if wants {
+            for q in crate::agent::routing_policy::side_questions(message) {
+                message_for_model.push_str(&format!("\n\n[The person also asked: \"{q}\". Do the work, then answer this in the final reply with specific points from what you read. It is part of the request, so the short answer format must not drop it, and answering it is not a reason to edit more files.]"));
+            }
+        }
         self.broad = wants && is_broad(ask);
         if self.broad {
             message_for_model.push_str(&format!("\n\n[{SWEEP}]"));
