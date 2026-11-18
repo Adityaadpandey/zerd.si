@@ -30,6 +30,13 @@ pub fn about_code_review(message: &str) -> bool {
     static R: OnceLock<Re> = OnceLock::new();
     R.get_or_init(|| lit_i(r"\b(review|audit|critique|diff|pr|pull request|changes?|commits?|code|bugs?|look over|check (?:it|this|my|the))\b")).is_match(typed(message))
 }
+/// "how do i make this better", "should we split it?": the person asked for advice, so an answer that proposes a step
+/// and asks before taking it is the right answer, not one to send back with "just do it".
+pub fn asks_how(message: &str) -> bool {
+    static R: OnceLock<Re> = OnceLock::new();
+    let t = typed(message).trim();
+    t.ends_with('?') || R.get_or_init(|| lit_i(r"^(?:so\s+|well\s+|ok\s+)?(?:how|what|why|which|should|would|could|can|is|are|do|does)\b")).is_match(t)
+}
 /// What the user actually typed. `@spec.md` inlines the whole file after the text, so every keyword check (review? fix?
 /// hard task? one agent?) must read this and not the full message: a spec that says "review" somewhere must not turn
 /// "implement this plan" into a review run.
@@ -142,6 +149,8 @@ mod tests {
     #[test]
     fn content_advice_is_not_a_code_review() {
         assert!(!about_code_review("well i am asking about the content how can we make it better so people genuinely read the site"));
+        assert!(asks_how("how do i make this better like people actually look at me") && asks_how("split it?"));
+        assert!(!asks_how("add a resume link to the hero") && !asks_how("make the status line smaller"));
         assert!(about_code_review("review the change i have") && about_code_review("look over my diff") && about_code_review("is this PR ok"));
     }
     #[test]
