@@ -126,6 +126,10 @@ fn main() {
         let code = if raw[1] == "setup" { if rt.block_on(setup::setup(&cfg, false)) { 0 } else { 1 } } else { rt.block_on(setup::doctor(&cfg)) };
         std::process::exit(code);
     }
+    if raw.get(1).map(String::as_str) == Some("update") {
+        let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
+        std::process::exit(rt.block_on(util::update::main()));
+    }
     if raw.get(1).map(String::as_str) == Some("insights") {
         std::process::exit(util::insights::main(raw.into_iter().skip(2).collect()));
     }
@@ -227,6 +231,9 @@ async fn run(args: Args) -> i32 {
         return 1;
     }
 
+    if tty && !scripted {
+        util::update::offer_on_launch().await; // once a day: a newer release is offered before the session starts
+    }
     let cwd = config.cwd.clone();
     if tty && !scripted {
         if let Some(f) = config::models_file::write_if_new(&config) {

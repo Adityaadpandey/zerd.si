@@ -24,3 +24,4 @@ pub mod graphcfg;
 pub mod symgraph;
 pub mod telemetry;
 pub mod templates;
+pub mod update;
