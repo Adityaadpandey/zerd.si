@@ -1,7 +1,7 @@
 // The home page FAQ, shared by the page, its FAQPage schema and llms.txt so the three never drift apart.
 export const FAQ = [
   ["What is zerd?", "A terminal coding agent that runs checks on the files it changed, has a second model review the real diff, and verifies every file path and line it mentions against your tree."],
-  ["How do I install zerd?", "On macOS or Linux run: curl -fsSL https://zerd.si/install.sh | sh. On Windows PowerShell run: irm https://zerd.si/install.ps1 | iex. It is a single binary with no runtime to set up."],
+  ["How do I install zerd?", "On macOS or Linux run: curl -fsSL https://www.zerd.si/install.sh | sh. On Windows PowerShell run: irm https://www.zerd.si/install.ps1 | iex. It is a single binary with no runtime to set up."],
   ["Which models does zerd work with?", "Claude, GPT, Codex, DeepSeek and local models. If a provider's quota runs out, zerd fails over to the next one and tells you."],
   ["How is zerd different from other coding agents?", "Instead of saying “done”, it reports the checks that ran, a review of the actual diff, and which claims were verified. Safety rules are enforced in code (confined tools and an OS sandbox), not just in the prompt."],
   ["Is zerd free and open source?", "It is free to run, including for commercial use. The source is on GitHub but it is source-available, not open source: you can read it, but not copy, modify or redistribute it."],

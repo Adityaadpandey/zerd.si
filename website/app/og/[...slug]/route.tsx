@@ -21,7 +21,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ slug: s
       <div style={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", justifyContent: "space-between", padding: 80, background: "#0b1020", color: "#fff" }}>
         <div style={{ display: "flex", fontSize: 40, color: "#c3a6ff" }}>{NAME} docs</div>
         <div style={{ display: "flex", fontSize: title.length > 48 ? 64 : 76, fontWeight: 700, lineHeight: 1.12 }}>{title}</div>
-        <div style={{ display: "flex", fontSize: 30, color: "#9fb0d0" }}>zerd.si · the terminal AI coding agent that verifies its own work</div>
+        <div style={{ display: "flex", fontSize: 30, color: "#9fb0d0" }}>www.zerd.si · the terminal AI coding agent that verifies its own work</div>
       </div>
     ),
     { width: 1200, height: 630 },

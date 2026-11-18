@@ -1,5 +1,5 @@
 # Downloads and verifies the latest zerd release into %LOCALAPPDATA%\zerd\bin and adds it to your user PATH.
-#   irm https://zerd.si/install.ps1 | iex
+#   irm https://www.zerd.si/install.ps1 | iex
 $ErrorActionPreference = 'Stop'
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'zerd needs 64-bit Windows' }
 if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { Write-Host 'ARM64 Windows: running the x64 build under emulation' }
