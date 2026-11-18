@@ -4,6 +4,13 @@ All notable changes to zerd. Newest first. Versions follow [semver](https://semv
 
 ## Unreleased
 
+## 0.1.3
+
+- zerd checks once a day, when it opens in a terminal, whether a newer release is out and asks `Update now? [Y/n]`. Yes installs it next to the current binary and restarts on it. `zerd update` does the same on demand; `ZERD_NO_UPDATE_CHECK=1` turns the launch check off.
+- zerd knows its name and who built it (Aditya Dutt Pandey, https://lab.adpandey.dev), so "who are you?" gets a straight answer instead of the underlying model's.
+- The side panel shows from the start, and the conversation no longer repeats what it lists: files read, files changed, commands run and sub-agents get no line of their own while the panel is on screen. Failures still print. `/verbose` brings the full output back.
+- A change to auth, payments, secrets or migrations gets an independent review even with `auto_review` off (`review_risky`, on by default).
+- The code graph finds far more real callers: calls inside Rust macros (`assert!`, `format!`, `vec!`) count, Python imports resolve from the project folder in a monorepo, and TypeScript follows workspace packages (`@acme/utils`) and nested `index.ts` re-exports. A cut-off callers list says how many it left out. `zerd graph --help` prints usage.
 - Checks run automatically in the interactive prompt again. One still running after 30 seconds (`verify_wait_sec`) moves to the background and prints its result when it finishes; a failure reaches the model with your next message.
 - When no check covers the changed files, zerd asks the model once to run something that proves the change.
 - An `unverified` result now says why (no check for these files, checks still running, token budget, a check that was already failing, docs only). It used to print "No verification commands found" for all of them.
