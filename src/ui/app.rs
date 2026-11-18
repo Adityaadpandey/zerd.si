@@ -72,6 +72,58 @@ pub fn expand_mentions(text: &str, cwd: &Path, forbidden: &[String]) -> (String,
     if blocks.is_empty() { (text.to_string(), attached) } else { (format!("{text}\n\n{}", blocks.join("\n\n")), attached) }
 }
 
+/// Image files named in what was typed: a path dragged into the terminal, like
+/// `/var/folders/.../Screenshot\ 2026-11-18\ at\ 11.48.43 AM.png` (spaces escaped or not), or `@shot.png`.
+/// Returns (where it starts in the text, where it ends, the file).
+fn find_images(text: &str, cwd: &Path) -> Vec<(usize, usize, PathBuf)> {
+    let lower = text.to_ascii_lowercase(); // same byte offsets as `text`
+    let ends: Vec<usize> = [".png", ".jpg", ".jpeg", ".gif", ".webp"].iter().flat_map(|e| lower.match_indices(e).map(move |(i, _)| i + e.len())).collect();
+    let mut found: Vec<(usize, usize, PathBuf)> = vec![];
+    for (start, c) in text.char_indices() {
+        let before = text[..start].chars().next_back();
+        if !matches!(c, '/' | '~' | '@') || !before.map_or(true, |b| b.is_whitespace() || "'\"".contains(b)) || found.last().map_or(false, |f| start < f.1) {
+            continue;
+        }
+        let mut ends: Vec<usize> = ends.iter().copied().filter(|e| *e > start).collect();
+        ends.sort();
+        for end in ends {
+            // `\ ` is how a terminal escapes a space in a dropped path
+            let raw: String = text[start..end].trim_start_matches('@').replace("\\ ", " ").replace('\\', "");
+            let path = match raw.strip_prefix("~/") {
+                Some(rest) => crate::util::platform::home_dir().unwrap_or_default().join(rest),
+                None => cwd.join(&raw),
+            };
+            if path.is_file() {
+                found.push((start, end, path));
+                break;
+            }
+        }
+    }
+    found
+}
+
+/// Copy each image in the message into zerd's data folder (macOS deletes screenshot temp files within minutes, and a
+/// resumed session still needs them) and add an `[image: copy]` line, which the provider adapters send as the image.
+pub fn attach_images(text: &str, cwd: &Path, dir: &Path) -> (String, Vec<String>) {
+    let (mut lines, mut names) = (vec![], vec![]);
+    for (_, _, src) in find_images(text, cwd) {
+        let name = src.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let dest = dir.join(format!("{stamp}-{name}"));
+        if std::fs::create_dir_all(dir).is_ok() && std::fs::copy(&src, &dest).is_ok() {
+            lines.push(format!("[image: {}]", dest.display()));
+            names.push(name);
+        }
+    }
+    if lines.is_empty() { (text.to_string(), names) } else { (format!("{text}\n\n{}", lines.join("\n")), names) }
+}
+
+/// A message that opens with a dragged-in file path is a message about that file, not a slash command.
+fn starts_with_path(text: &str, cwd: &Path) -> bool {
+    let first = text.split_whitespace().next().unwrap_or("");
+    find_images(text, cwd).first().map_or(false, |f| f.0 == 0) || (first[1..].contains('/') && Path::new(first).exists())
+}
+
 fn copy_to_clipboard(text: &str) -> bool {
     for cmd in [vec!["pbcopy"], vec!["wl-copy"], vec!["xclip", "-selection", "clipboard"]] {
         if which::which(cmd[0]).is_err() {
@@ -687,7 +739,7 @@ impl Cli {
             if fs.is_some() {
                 self.tui.echo_sent(&user_input);
             }
-            if user_input.starts_with('/') {
+            if user_input.starts_with('/') && !starts_with_path(&user_input, &self.config.get().cwd) {
                 if !self.handle_command(&user_input).await {
                     break;
                 }
@@ -698,7 +750,10 @@ impl Cli {
                 continue;
             }
             let cfg = self.config.get();
-            let (text, attached) = expand_mentions(&user_input, &cfg.cwd, &cfg.forbidden_paths);
+            let (text, images) = attach_images(&user_input, &cfg.cwd, &get_data_dir().join("images"));
+            let (text, mut attached) = expand_mentions(&text, &cfg.cwd, &cfg.forbidden_paths);
+            attached.retain(|a| crate::client::adapters::image_type(a).is_none()); // the image went as a picture, not as text
+            attached.extend(images);
             if !attached.is_empty() {
                 uprintln!("{}", paint(&format!("  attached: {}", attached.join(", ")), MUTED));
             }
@@ -1566,6 +1621,22 @@ fn _unused(_: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropped_screenshots_attach_and_are_not_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let shot = dir.path().join("Screenshot 2026-11-18 at 11.48.43\u{202f}AM.png");
+        std::fs::write(&shot, b"png").unwrap();
+        let typed = format!("{} fix this too", shot.display().to_string().replace(' ', "\\ "));
+        assert!(starts_with_path(&typed, dir.path()));
+        assert!(!starts_with_path("/help", dir.path()));
+        let store = dir.path().join("store");
+        let (text, names) = attach_images(&typed, dir.path(), &store);
+        assert_eq!(names, vec![shot.file_name().unwrap().to_string_lossy().to_string()]);
+        let line = text.lines().last().unwrap();
+        assert!(line.starts_with("[image: ") && Path::new(&line[8..line.len() - 1]).is_file(), "{text}"); // a copy that outlives the temp file
+        assert!(attach_images("see @Screenshot", dir.path(), &store).1.is_empty());
+    }
 
     #[test]
     fn replay_skips_what_zerd_told_the_model() {
