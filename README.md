@@ -57,6 +57,9 @@ OpenAI, OpenRouter or Gemini key, a local Ollama or LM Studio, or the gateway), 
 provider, pick a model. `zerd doctor` checks your credentials, a live provider call, git, the sandbox and your terminal, and
 prints the fix next to each problem.
 
+zerd checks for a newer release once a day when it opens and asks before updating; `zerd update` does it on demand, and
+`ZERD_NO_UPDATE_CHECK=1` turns the check off.
+
 <details>
 <summary>Build from source, Windows notes, one-shot use</summary>
 
