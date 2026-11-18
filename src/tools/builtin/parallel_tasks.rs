@@ -40,12 +40,12 @@ impl Tool for ParallelTasksTool {
     }
     fn schema(&self) -> Value {
         let item = json!({"type": "object", "properties": {
-            "id": {"type": "string", "description": "Short unique id"},
+            "id": {"type": "string", "description": "Short unique id (defaults to task-1, task-2, ...)"},
             "goal": {"type": "string", "description": "Complete, self-contained instruction for one worker"},
             "files": {"type": "array", "items": {"type": "string"}, "description": "Files this worker owns (it must not edit others)"},
-            "deps": {"type": "array", "items": {"type": "string"}, "description": "Ids of tasks that must finish first"}}, "required": ["id", "goal"]});
+            "deps": {"type": "array", "items": {"type": "string"}, "description": "Ids of tasks that must finish first"}}, "required": ["goal"]});
         schema_of(
-            json!({"tasks": {"type": "array", "minItems": 2, "items": item, "description": "2 or more tasks"},
+            json!({"tasks": {"type": "array", "minItems": 1, "items": item, "description": "The tasks, usually 2 or more"},
                    "apply": {"type": "boolean", "default": true, "description": "Fast-forward the merged result into the working tree when it is clean"}}),
             &["tasks"],
         )
@@ -56,7 +56,7 @@ impl Tool for ParallelTasksTool {
             .iter()
             .map(|t| {
                 let files: Vec<&str> = t["files"].as_array().map(|f| f.iter().filter_map(Value::as_str).collect()).unwrap_or_default();
-                format!("  {}: {}{}", t["id"].as_str().unwrap_or(""), crate::util::text::head_chars(t["goal"].as_str().unwrap_or(""), 110), if files.is_empty() { String::new() } else { format!("  [{}]", files.join(", ")) })
+                format!("  {}: {}{}", t["id"].as_str().unwrap_or("task"), crate::util::text::head_chars(t["goal"].as_str().unwrap_or(""), 110), if files.is_empty() { String::new() } else { format!("  [{}]", files.join(", ")) })
             })
             .collect();
         Some(ToolConfirmation {
