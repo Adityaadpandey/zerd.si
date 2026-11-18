@@ -6,7 +6,7 @@ import { getMDXComponents } from "@/components/mdx";
 import { JsonLd } from "@/lib/jsonld";
 import { NAME, SITE } from "@/lib/site";
 import { DOC_SEO, pageMeta } from "@/lib/seo";
-import { lastModified } from "@/lib/lastmod";
+import { lastModified, published } from "@/lib/lastmod";
 
 type Props = { params: Promise<{ slug: string[] }> };
 
@@ -23,10 +23,13 @@ export default async function Page({ params }: Props) {
           "@context": "https://schema.org",
           "@graph": [
             {
-              "@type": "TechArticle", headline: seo?.title ?? page.data.title, description: seo?.description ?? page.data.description,
+              "@type": "TechArticle", "@id": `${url}#article`, headline: seo?.title ?? page.data.title, description: seo?.description ?? page.data.description,
               url, mainEntityOfPage: url, inLanguage: "en", image: `${SITE}/og/${page.slugs.join("/")}`, dateModified: lastModified(`content/docs/${page.path}`),
+              datePublished: published(`content/docs/${page.path}`),
               keywords: seo?.keywords?.join(", "), isPartOf: { "@id": `${SITE}/#site` }, about: { "@id": `${SITE}/#app` },
-              author: { "@id": `${SITE}/#org` }, publisher: { "@id": `${SITE}/#org` },
+              // The person who wrote it, not the tool. An answer engine needs a source it can name.
+              author: { "@id": `${SITE}/#author` }, publisher: { "@id": `${SITE}/#org` },
+              thumbnailUrl: `${SITE}/og/${page.slugs.join("/")}`,
             },
             {
               "@type": "BreadcrumbList",
