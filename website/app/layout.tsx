@@ -4,6 +4,7 @@ import { Provider } from "@/components/provider";
 import { JsonLd } from "@/lib/jsonld";
 import { DESCRIPTION, HOME_TITLE, NAME, SITE } from "@/lib/site";
 import { REPO } from "@/lib/docs";
+import { AUTHOR } from "@/lib/author";
 import "./globals.css";
 
 const sans = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-sans" });
@@ -16,13 +17,14 @@ export const metadata: Metadata = {
   description: DESCRIPTION,
   applicationName: NAME,
   keywords: ["terminal coding agent", "AI coding agent", "AI coding assistant CLI", "Claude Code alternative", "Aider alternative", "Codex CLI alternative", "AI code review", "verify AI generated code", "agentic coding", "Rust CLI"],
-  authors: [{ name: NAME, url: SITE }],
+  authors: [{ name: AUTHOR.name, url: AUTHOR.site }],
   creator: NAME,
   category: "technology",
-  alternates: { canonical: "/" },
   openGraph: { type: "website", siteName: NAME, locale: "en_US", url: SITE, title: HOME_TITLE, description: DESCRIPTION },
   twitter: { card: "summary_large_image", title: HOME_TITLE, description: DESCRIPTION },
-  robots: { index: true, follow: true, googleBot: { "max-snippet": -1, "max-image-preview": "large" } },
+  // No global `robots` here on purpose. Next.js puts `noindex` on the 404 page, and a second global
+  // tag saying `index, follow` left the 404 with two conflicting robots directives, which Google reads
+  // as an indexable page. Each page states its own indexing instead, and the 404 keeps only `noindex`.
 };
 
 // Tells search and answer engines what zerd is and who makes it. The nodes point at each other by @id,
@@ -33,6 +35,13 @@ const schema = {
     {
       "@type": "Organization", "@id": `${SITE}/#org`, name: NAME, url: SITE, logo: `${SITE}/icon.svg`,
       sameAs: [`https://github.com/${REPO}`],
+      founder: { "@id": `${SITE}/#author` },
+    },
+    {
+      // A person, not the product name. An answer engine asked "who says this" needs a name it can
+      // attribute a claim to, and "zerd" is a tool, not a source.
+      "@type": "Person", "@id": `${SITE}/#author`, name: AUTHOR.name, url: AUTHOR.site, sameAs: [AUTHOR.site, AUTHOR.github],
+      jobTitle: AUTHOR.jobTitle, knowsAbout: [...AUTHOR.knowsAbout], worksFor: { "@id": `${SITE}/#org` },
     },
     { "@type": "WebSite", "@id": `${SITE}/#site`, url: SITE, name: NAME, description: DESCRIPTION, inLanguage: "en", publisher: { "@id": `${SITE}/#org` } },
     {
@@ -40,6 +49,7 @@ const schema = {
       applicationCategory: "DeveloperApplication", applicationSubCategory: "AI coding agent", operatingSystem: "macOS, Linux, Windows",
       offers: { "@type": "Offer", price: "0", priceCurrency: "USD" }, isAccessibleForFree: true,
       author: { "@id": `${SITE}/#org` }, publisher: { "@id": `${SITE}/#org` },
+      sameAs: [`https://github.com/${REPO}`],
       codeRepository: `https://github.com/${REPO}`, downloadUrl: `${SITE}/docs/quickstart`, installUrl: `${SITE}/docs/quickstart`,
       softwareHelp: { "@type": "WebPage", url: `${SITE}/docs` }, license: `${SITE}/docs/license`,
       featureList: [
