@@ -18,7 +18,7 @@
   <a href="#safety">Safety</a> ·
   <a href="#reference">Reference</a> ·
   <a href="#where-zerd-is-not-there-yet">Limits</a> ·
-  <a href="https://zerd.si">Website</a>
+  <a href="https://www.zerd.si">Website</a>
 </p>
 
 # zerd
@@ -42,8 +42,8 @@ One native Rust binary. No Python, no Node, nothing to install next to it.
 ## Install
 
 ```bash
-curl -fsSL https://zerd.si/install.sh | sh          # macOS and Linux
-irm https://zerd.si/install.ps1 | iex               # Windows 10/11, PowerShell
+curl -fsSL https://www.zerd.si/install.sh | sh          # macOS and Linux
+irm https://www.zerd.si/install.ps1 | iex               # Windows 10/11, PowerShell
 ```
 
 Then, in any repo:

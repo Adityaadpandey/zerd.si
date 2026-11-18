@@ -17,7 +17,7 @@
 use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_URL: &str = "https://zerd.si/api/telemetry";
+const DEFAULT_URL: &str = "https://www.zerd.si/api/telemetry";
 
 /// Tools zerd ships. Anything else (an MCP tool, a user's own tool or sub-agent) could carry a private name, so it
 /// is counted under "other".

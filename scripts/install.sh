@@ -1,6 +1,6 @@
 #!/bin/sh
 # Downloads and verifies the latest zerd release for this machine into ~/.local/bin.
-#   curl -fsSL https://zerd.si/install.sh | sh
+#   curl -fsSL https://www.zerd.si/install.sh | sh
 set -e
 case "$(uname -s)-$(uname -m)" in
   Darwin-arm64)              t=aarch64-apple-darwin ;;
