@@ -1,11 +1,27 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { latestRelease } from "@/lib/latest";
 import { JsonLd } from "@/lib/jsonld";
 import CopyCmd from "./copy-cmd";
 import Demo from "./demo";
 import { FAQ } from "@/lib/faq";
+import { DESCRIPTION, HOME_TITLE, NAME, SITE } from "@/lib/site";
+import { AUTHOR } from "@/lib/author";
 
-const INSTALL = "curl -fsSL https://zerd.si/install.sh | sh";
+// The homepage states its own canonical and robots. It used to inherit them from the root layout, but a
+// global `canonical: "/"` also landed on the 404 page, telling Google the 404 was another copy of the
+// homepage. A global `index, follow` did the same thing to the 404's robots tags, which is how a 404
+// ended up looking indexable.
+export const metadata: Metadata = {
+  title: HOME_TITLE,
+  description: DESCRIPTION,
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true, googleBot: { "max-snippet": -1, "max-image-preview": "large" } },
+  openGraph: { type: "website", siteName: NAME, locale: "en_US", url: SITE, title: HOME_TITLE, description: DESCRIPTION },
+  twitter: { card: "summary_large_image", title: HOME_TITLE, description: DESCRIPTION },
+};
+
+const INSTALL = "curl -fsSL https://www.zerd.si/install.sh | sh";
 
 const VERSUS: [string, string, string][] = [
   ["Real PostgreSQL", "Yes", "No"],
@@ -29,7 +45,23 @@ export default async function Home() {
   const rel = await latestRelease();
   return (
     <main>
-      <JsonLd data={{ "@context": "https://schema.org", "@type": "FAQPage", mainEntity: FAQ.map(([q, a]) => ({ "@type": "Question", name: q, acceptedAnswer: { "@type": "Answer", text: a } })) }} />
+      <JsonLd
+        data={{
+          "@context": "https://schema.org",
+          "@type": "FAQPage",
+          "@id": `${SITE}/#faq`,
+          url: SITE,
+          isPartOf: { "@id": `${SITE}/#site` },
+          mainEntity: FAQ.map(([q, a]) => ({
+            "@type": "Question",
+            name: q,
+            acceptedAnswer: { "@type": "Answer", text: a },
+            // Marks the question as one a voice assistant should read out, for the answers that are a
+            // single spoken sentence.
+            speakable: { "@type": "SpeakableSpecification", cssSelector: ["details summary"] },
+          })),
+        }}
+      />
 
       <section className="hero">
         <div className="hero-img" aria-hidden="true">
@@ -51,6 +83,9 @@ export default async function Home() {
             <a href="#proof">See it beat a mock test</a>
           </p>
           <p className="hero-fine">Free to run · macOS, Linux, Windows · Claude, GPT, DeepSeek or local models</p>
+          <p className="hero-fine">
+            Built by <a href={AUTHOR.site} rel="author">Aditya Dutt Pandey</a> · <Link href="/docs/about">About zerd</Link>
+          </p>
         </div>
       </section>
 
@@ -95,7 +130,7 @@ export default async function Home() {
           <p>One binary, no setup, two minutes. If it doesn’t save you review time, /undo puts everything back.</p>
         </div>
         <CopyCmd cmd={INSTALL} />
-        <p className="hero-fine">Windows: <code>irm https://zerd.si/install.ps1 | iex</code></p>
+        <p className="hero-fine">Windows: <code>irm https://www.zerd.si/install.ps1 | iex</code></p>
         <p className="hero-links">
           <Link href="/docs/quickstart">Get started</Link>
           <Link href="/docs/verification">Why zerd</Link>

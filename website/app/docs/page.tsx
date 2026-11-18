@@ -3,6 +3,8 @@ import Link from "next/link";
 import { DocsBody, DocsDescription, DocsPage, DocsTitle } from "fumadocs-ui/layouts/docs/page";
 import { source } from "@/lib/source";
 import { pageMeta } from "@/lib/seo";
+import { JsonLd } from "@/lib/jsonld";
+import { NAME, SITE } from "@/lib/site";
 
 export const metadata: Metadata = pageMeta({
   path: "/docs",
@@ -20,6 +22,7 @@ const BLURBS: Record<string, string> = {
   "Under the hood": "How zerd decides a change is actually finished.",
   Reference: "Every flag, setting and command, for when you know what you’re after.",
   Evidence: "Head-to-head results, honest limits, and the license.",
+  About: "Who writes zerd, how it is built, and where the source lives.",
   Compare: "zerd next to Claude Code, Aider, Codex CLI and OpenCode, and which to pick.",
 };
 
@@ -40,6 +43,27 @@ function groups() {
 export default function DocsIndex() {
   return (
     <DocsPage toc={[]}>
+      {/* The index is a collection of every docs page. Saying so in schema lets an answer engine pick
+          this page when the question is "what does zerd document" rather than one specific page. */}
+      <JsonLd
+        data={{
+          "@context": "https://schema.org",
+          "@graph": [
+            {
+              "@type": "CollectionPage", "@id": `${SITE}/docs#collection`, url: `${SITE}/docs`,
+              name: "zerd docs", description: "Install, models, safety, CLI and tools reference for zerd, the terminal AI coding agent.",
+              isPartOf: { "@id": `${SITE}/#site` }, about: { "@id": `${SITE}/#app` },
+            },
+            {
+              "@type": "ItemList", "@id": `${SITE}/docs#list`,
+              numberOfItems: source.getPages().length,
+              itemListElement: source.getPages().map((p, i) => ({
+                "@type": "ListItem", position: i + 1, name: p.data.title, url: `${SITE}${p.url}`,
+              })),
+            },
+          ],
+        }}
+      />
       <DocsTitle>Learn zerd</DocsTitle>
       <DocsDescription>zerd is a terminal coding agent that checks its own work. Install it in two minutes, see how a run is verified, and read where it still falls short.</DocsDescription>
       <DocsBody>
