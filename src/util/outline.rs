@@ -24,6 +24,7 @@ struct Pats {
     md: Re,
     jsx_note: Re,
     banner: Re,
+    data: Re,
 }
 
 fn pats() -> &'static Pats {
@@ -36,6 +37,9 @@ fn pats() -> &'static Pats {
         md: lit(r"^(?P<h>#{1,4})\s+(?P<n>.+)"),
         jsx_note: lit(r"^(?P<i>\s*)\{/\*\s*(?P<n>[^*]{3,80}?)\s*\*/\}\s*$"),
         banner: lit(r"^(?P<i>\s*)//\s*[─\-=]{2,}\s*(?P<n>[^─\-=][^─=]{2,70}?)\s*[─\-=]*\s*$"),
+        // Top-level data, like `export const cases: readonly Case[] = [` in a content file. Only at column 0, so the
+        // `const rows = [` lines inside function bodies don't flood the outline.
+        data: lit(r"^(?:export\s+)?(?:const|let|var)\s+(?P<n>[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*[\[{]"),
     })
 }
 
@@ -71,6 +75,10 @@ pub fn outline(path: &str, src: &str) -> Vec<Symbol> {
             "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" => {
                 if let Some(m) = named(&p.js, line, &["i", "k", "n", "c"]) {
                     syms.push(mk(m[2].clone().or(m[3].clone()).unwrap_or_default(), m[1].clone().unwrap_or_else(|| "const".into()), m[0].as_ref().map_or(0, |s| s.len()), false));
+                    continue;
+                }
+                if let Some(m) = named(&p.data, line, &["n"]) {
+                    syms.push(mk(m[0].clone().unwrap_or_default(), "const".into(), 0, false));
                     continue;
                 }
                 if let Some(m) = named(&p.method, line, &["i", "n"]) {
@@ -155,5 +163,14 @@ mod tests {
         let s = outline("x.ts", src);
         assert_eq!((s[0].name.as_str(), s[0].start, s[0].end), ("a", 1, 3));
         assert_eq!((s[1].name.as_str(), s[1].start, s[1].end), ("b", 5, 7));
+    }
+
+    #[test]
+    fn top_level_data_is_a_symbol_but_locals_are_not() {
+        // A content file: `read_file symbol=cases` used to say "No symbol 'cases'".
+        let src = "export const cases: readonly Case[] = [\n  { slug: \"a\" },\n];\n\nfunction f() {\n  const rows = [1];\n}\n";
+        let s = outline("work.ts", src);
+        assert_eq!((s[0].name.as_str(), s[0].start, s[0].end), ("cases", 1, 3));
+        assert!(!s.iter().any(|x| x.name == "rows"), "{:?}", s.iter().map(|x| &x.name).collect::<Vec<_>>());
     }
 }
