@@ -30,6 +30,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/stats", "session statistics"),
     ("/tools", "list available tools"),
     ("/skills", "list project playbooks"),
+    ("/update", "install the newest zerd release; it takes over the next time zerd starts"),
     ("/layout", "show or hide parts of the full-screen layout: /layout read off, /layout reset (F3 flips the side panel)"),
     ("/verbose", "switch between quiet output (default) and full tool output"),
     ("/challenge", "a second model argues against your idea"),

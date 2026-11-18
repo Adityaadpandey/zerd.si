@@ -6,7 +6,7 @@ All notable changes to zerd. Newest first. Versions follow [semver](https://semv
 
 ## 0.1.3
 
-- zerd checks once a day, when it opens in a terminal, whether a newer release is out and asks `Update now? [Y/n]`. Yes installs it next to the current binary and restarts on it. `zerd update` does the same on demand; `ZERD_NO_UPDATE_CHECK=1` turns the launch check off.
+- zerd checks once a day, when it opens in a terminal, whether a newer release is out and asks `Update now? [Y/n]`. Yes installs it next to the current binary and restarts on it. `zerd update` does the same on demand, and `/update` installs it from inside a session for the next start. `ZERD_NO_UPDATE_CHECK=1` turns the launch check off.
 - zerd knows its name and who built it (Aditya Dutt Pandey, https://lab.adpandey.dev), so "who are you?" gets a straight answer instead of the underlying model's.
 - The side panel shows from the start, and the conversation no longer repeats what it lists: files read, files changed, commands run and sub-agents get no line of their own while the panel is on screen. Failures still print. `/verbose` brings the full output back.
 - A change to auth, payments, secrets or migrations gets an independent review even with `auto_review` off (`review_risky`, on by default).
