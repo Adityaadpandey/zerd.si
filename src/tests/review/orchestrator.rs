@@ -92,6 +92,10 @@ fn graph_validation() {
     assert!(parse_graph(&g(&[("a", &["b"]), ("b", &["a"])])).is_err());
     assert!(parse_graph(&g(&[("a", &["zzz"])])).is_err());
     assert!(parse_graph(&g(&[("a", &[]), ("a", &[])])).is_err());
+    // Tasks sent without ids are named by position, and a single task is fine.
+    let n = parse_graph(&json!({"tasks": [{"goal": "x"}, {"goal": "y"}]})).unwrap();
+    assert_eq!((n[0].id.as_str(), n[1].id.as_str()), ("task-1", "task-2"));
+    assert_eq!(parse_graph(&json!({"tasks": [{"goal": "x"}]})).unwrap().len(), 1);
 }
 
 #[tokio::test]

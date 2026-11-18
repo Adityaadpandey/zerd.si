@@ -45,7 +45,9 @@ pub fn parse_graph(data: &Value) -> Result<Vec<Node>, GraphError> {
         .as_array()
         .into_iter()
         .flatten()
-        .map(|t| Node { id: t["id"].as_str().unwrap_or("").into(), goal: t["goal"].as_str().unwrap_or("").into(), deps: strs(&t["deps"]), files: strs(&t["files"]), status: "pending".into(), branch: String::new(), changed: vec![], seconds: 0.0, note: String::new(), task_status: None })
+        .enumerate()
+        // A task the model sent without an id gets one by position ("task-2"), instead of the whole call bouncing.
+        .map(|(i, t)| Node { id: t["id"].as_str().filter(|s| !s.is_empty()).map_or_else(|| format!("task-{}", i + 1), String::from), goal: t["goal"].as_str().unwrap_or("").into(), deps: strs(&t["deps"]), files: strs(&t["files"]), status: "pending".into(), branch: String::new(), changed: vec![], seconds: 0.0, note: String::new(), task_status: None })
         .collect();
     if nodes.is_empty() {
         return Err(GraphError("graph has no tasks".into()));
