@@ -223,6 +223,10 @@ pub struct Screen {
     /// Where the input text is on screen and where each row starts, for turning a click into a char index.
     in_rect: Rect,
     in_starts: Vec<usize>,
+    /// The side panel on screen and the full text behind each of its rows (a whole path or command), so a click
+    /// copies what the row shows even when it's clipped.
+    side_rect: Rect,
+    side_rows: Vec<(u16, String)>,
 }
 
 impl Screen {
@@ -252,6 +256,8 @@ impl Screen {
             in_drag: false,
             in_rect: Rect::default(),
             in_starts: vec![0],
+            side_rect: Rect::default(),
+            side_rows: vec![],
         }
     }
 
@@ -427,6 +433,13 @@ impl Screen {
         match ev.kind {
             MouseEventKind::ScrollUp => self.scroll(3),
             MouseEventKind::ScrollDown => self.scroll(-3),
+            MouseEventKind::Down(MouseButton::Left) if inside(self.side_rect, ev.column, ev.row) => {
+                // a click on a side-panel row copies that file path or command
+                if let Some((_, text)) = self.side_rows.iter().find(|(y, t)| *y == ev.row && !t.is_empty()) {
+                    copy_to_clipboard(text);
+                    self.copied_at = Some(Instant::now());
+                }
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 let r = self.main_rect;
                 if ev.column < r.x || ev.column >= r.x + r.width || ev.row < r.y || ev.row >= r.y + r.height {
@@ -737,11 +750,16 @@ impl Screen {
         f.render_widget(Paragraph::new(lines), main);
 
         // side panel
+        // the side panel runs down to the input box whatever the status block under the conversation is doing, so a
+        // spinner or a question appearing never squeezes it
+        self.side_rect = Rect::default();
+        self.side_rows.clear();
         if side {
             let x = (cols - SIDE_WIDTH - 1) as u16;
-            let rule: Vec<RLine> = (0..body_h).map(|_| RLine::from(sp(fg(RULE), "│"))).collect();
-            f.render_widget(Paragraph::new(rule), Rect::new(x, 1, 1, body_h as u16));
-            self.draw_side(f, Rect::new(x + 1, 1, SIDE_WIDTH as u16, body_h as u16));
+            let side_h = box_y.saturating_sub(1).max(1);
+            let rule: Vec<RLine> = (0..side_h).map(|_| RLine::from(sp(fg(RULE), "│"))).collect();
+            f.render_widget(Paragraph::new(rule), Rect::new(x, 1, 1, side_h as u16));
+            self.draw_side(f, Rect::new(x + 1, 1, SIDE_WIDTH as u16, side_h as u16));
         }
 
         // status (spinner, sub-agents, a question) and the scanner light
@@ -803,10 +821,11 @@ impl Screen {
     }
 
     fn draw_side(&mut self, f: &mut Frame, r: Rect) {
+        self.side_rect = r;
         let data = self.tui.snapshot_side();
         let on = |k: &str| super::layout::shown(k);
-        let has = [!(data.running.is_empty() && data.finished.is_empty()) && on("agents"), !data.read.is_empty() && on("read"), !data.written.is_empty() && on("written"), !data.commands.is_empty() && on("commands")];
-        let shown: Vec<usize> = (0..4).filter(|k| has[*k]).collect();
+        let has = [!(data.running.is_empty() && data.finished.is_empty()) && on("agents"), !data.read.is_empty() && on("read"), !data.written.is_empty() && on("written"), !data.commands.is_empty() && on("commands"), !data.todos.is_empty() && on("tasks")];
+        let shown: Vec<usize> = [4, 0, 1, 2, 3].into_iter().filter(|k| has[*k]).collect();
         f.render_widget(Paragraph::new("").style(Style::default().bg(hx(BG_PANEL))), r);
         if shown.is_empty() {
             let hint = " Files zerd reads and changes, and the commands it runs, show up here.";
@@ -825,7 +844,8 @@ impl Screen {
                 f.render_widget(Paragraph::new(RLine::from(sp(fg(RULE).bg(hx(BG_PANEL)), "─".repeat(r.width as usize)))), Rect::new(r.x, y, r.width, 1));
                 y += 1;
             }
-            let lines = section(*k, h, &data);
+            let (lines, texts): (Vec<_>, Vec<_>) = section(*k, h, &data).into_iter().unzip();
+            self.side_rows.extend(texts.into_iter().enumerate().map(|(i, t)| (y + i as u16, t)));
             f.render_widget(Paragraph::new(lines).style(Style::default().bg(hx(BG_PANEL))), Rect::new(r.x, y, r.width, h as u16));
             y += h as u16;
         }
@@ -917,14 +937,21 @@ fn footer_line(text: &str, cols: usize) -> RLine<'static> {
     RLine::from(spans)
 }
 
-/// One side-panel section: a chip with the count, then the newest items that fit.
-fn section(kind: usize, h: usize, d: &SideData) -> Vec<RLine<'static>> {
+fn inside(r: Rect, col: u16, row: u16) -> bool {
+    col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
+}
+
+/// One side-panel section: a chip with the count, then the newest items that fit. Each row comes with the text a click
+/// on it copies (empty for the heading).
+fn section(kind: usize, h: usize, d: &SideData) -> Vec<(RLine<'static>, String)> {
     let width = SIDE_WIDTH - 3;
-    let (title, color) = [("AGENTS", ACCENT), ("READ", SKY), ("WRITTEN", AMBER), ("COMMANDS", LAVENDER)][kind];
-    let count = [d.running.len() + d.finished.len(), d.read.len(), d.written.len(), d.commands.len()][kind];
+    let (title, color) = [("AGENTS", ACCENT), ("READ", SKY), ("WRITTEN", AMBER), ("COMMANDS", LAVENDER), ("TASKS", MINT)][kind];
+    let count = [d.running.len() + d.finished.len(), d.read.len(), d.written.len(), d.commands.len(), d.todos.len()][kind];
     let mut head = vec![sp(Style::default(), " "), sp(chip_style(color), format!(" {title} "))];
     if kind == 0 && !d.running.is_empty() {
         head.push(sp(bold_fg(ACCENT), format!(" {} running", d.running.len())));
+    } else if kind == 4 {
+        head.push(sp(bold_fg(color), format!(" {}/{count}", d.todos.iter().filter(|t| t.1).count())));
     } else {
         head.push(sp(bold_fg(color), format!(" {count}")));
     }
@@ -932,17 +959,17 @@ fn section(kind: usize, h: usize, d: &SideData) -> Vec<RLine<'static>> {
         let (a, r) = d.written.iter().fold((0, 0), |(a, r), (_, v)| (a + v.0, r + v.1));
         head.extend([sp(Style::default(), "  "), sp(fg(MINT), format!("+{a}")), sp(fg(CORAL), format!(" −{r}"))]);
     }
-    let mut out = vec![RLine::from(head)];
-    let mut items: Vec<RLine<'static>> = vec![];
+    let mut out = vec![(RLine::from(head), String::new())];
+    let mut items: Vec<(RLine<'static>, String)> = vec![];
     let glow = |fresh: bool| if fresh { Style::default().bg(hx(BG_GLOW)) } else { Style::default() };
     match kind {
         0 => {
             for (agent, recent, stats) in &d.running {
-                items.push(RLine::from(vec![sp(fg(ACCENT), " ◆ "), sp(bold_fg(FG), agent_title(agent)), sp(fg(MUTED), format!("  {stats}"))]));
-                items.push(RLine::from(vec![sp(fg(MUTED), "   ╰ "), sp(fg(FG), clip(recent, width - 5))]));
+                items.push((RLine::from(vec![sp(fg(ACCENT), " ◆ "), sp(bold_fg(FG), agent_title(agent)), sp(fg(MUTED), format!("  {stats}"))]), agent_title(agent)));
+                items.push((RLine::from(vec![sp(fg(MUTED), "   ╰ "), sp(fg(FG), clip(recent, width - 5))]), recent.clone()));
             }
             for (agent, ok, stats) in &d.finished {
-                items.push(RLine::from(vec![sp(fg(if *ok { MINT } else { CORAL }), if *ok { " ✓ " } else { " ✗ " }), sp(fg(FG), agent_title(agent)), sp(fg(MUTED), format!("  {stats}"))]));
+                items.push((RLine::from(vec![sp(fg(if *ok { MINT } else { CORAL }), if *ok { " ✓ " } else { " ✗ " }), sp(fg(FG), agent_title(agent)), sp(fg(MUTED), format!("  {stats}"))]), agent_title(agent)));
             }
         }
         1 => {
@@ -951,12 +978,12 @@ fn section(kind: usize, h: usize, d: &SideData) -> Vec<RLine<'static>> {
                 let tail = if *n > 1 { format!(" ×{n}") } else { String::new() };
                 let c = clip(path, width - 2 - tail.chars().count());
                 let (head, name) = c.rsplit_once('/').map_or((String::new(), c.clone()), |(h, n)| (format!("{h}/"), n.to_string()));
-                items.push(RLine::from(vec![
+                items.push((RLine::from(vec![
                     if fresh { sp(fg(ACCENT).patch(glow(true)), " ●") } else { sp(fg(MUTED), "  ") },
                     sp(fg(MUTED).patch(glow(fresh)), head),
                     sp(bold_fg(FG).patch(glow(fresh)), name),
                     sp(fg(MUTED), tail),
-                ]));
+                ]), path.clone()));
             }
         }
         2 => {
@@ -969,7 +996,7 @@ fn section(kind: usize, h: usize, d: &SideData) -> Vec<RLine<'static>> {
                 let tag = if *new { " new" } else { "" };
                 let c = clip(path, width.saturating_sub(2 + na.chars().count() + nd.chars().count() + cells + tag.len() + 2));
                 let (head, name) = c.rsplit_once('/').map_or((String::new(), c.clone()), |(h, n)| (format!("{h}/"), n.to_string()));
-                items.push(RLine::from(vec![
+                items.push((RLine::from(vec![
                     if fresh { sp(fg(ACCENT).patch(glow(true)), " ●") } else { sp(fg(MUTED), "  ") },
                     sp(fg(MUTED).patch(glow(fresh)), head),
                     sp(bold_fg(FG).patch(glow(fresh)), name),
@@ -979,16 +1006,24 @@ fn section(kind: usize, h: usize, d: &SideData) -> Vec<RLine<'static>> {
                     sp(Style::default(), " "),
                     sp(fg(MINT).patch(glow(fresh)), "█".repeat(a_c.min(cells))),
                     sp(fg(CORAL).patch(glow(fresh)), "█".repeat(cells - a_c.min(cells))),
-                ]));
+                ]), path.clone()));
+            }
+        }
+        3 => {
+            for (i, (cmd, ok)) in d.commands.iter().enumerate() {
+                let fresh = d.fresh.contains(&format!("cmd:{i}"));
+                items.push((RLine::from(vec![
+                    sp(bold_fg(if *ok { MINT } else { CORAL }).patch(glow(fresh)), if *ok { " ✓ " } else { " ✗ " }),
+                    sp(fg(FG).patch(glow(fresh)), clip(&cmd.replace('\n', " "), width - 3)),
+                ]), cmd.clone()));
             }
         }
         _ => {
-            for (i, (cmd, ok)) in d.commands.iter().enumerate() {
-                let fresh = d.fresh.contains(&format!("cmd:{i}"));
-                items.push(RLine::from(vec![
-                    sp(bold_fg(if *ok { MINT } else { CORAL }).patch(glow(fresh)), if *ok { " ✓ " } else { " ✗ " }),
-                    sp(fg(FG).patch(glow(fresh)), clip(&cmd.replace('\n', " "), width - 3)),
-                ]));
+            // ◼ done, ▸ the step being worked on, ◻ still to do; long steps keep their start, which says what they are
+            for (text, done, now) in &d.todos {
+                let (mark, st) = if *done { ("◼", fg(MUTED)) } else if *now { ("▸", bold_fg(FG)) } else { ("◻", fg(FG)) };
+                let shown: String = if text.chars().count() > width - 3 { format!("{}…", text.chars().take(width - 4).collect::<String>()) } else { text.clone() };
+                items.push((RLine::from(vec![sp(if *now { bold_fg(ACCENT) } else { fg(MUTED) }, format!(" {mark} ")), sp(st, shown)]), text.clone()));
             }
         }
     }
@@ -997,7 +1032,7 @@ fn section(kind: usize, h: usize, d: &SideData) -> Vec<RLine<'static>> {
     if hidden > 0 {
         let keep = rows - 1;
         let drop = items.len() - keep;
-        out.push(RLine::from(sp(fg(MUTED), format!("  ⋯ {drop} {}", if kind == 0 { "more" } else { "earlier" }))));
+        out.push((RLine::from(sp(fg(MUTED), format!("  ⋯ {drop} {}", if kind == 0 || kind == 4 { "more" } else { "earlier" }))), String::new()));
         out.extend(items.into_iter().skip(drop));
     } else {
         out.extend(items);

@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 const SPIN: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const QUIET_COMMANDS: &[&str] = &["grep", "rg", "find", "ls", "cat", "head", "tail", "wc", "tree", "pwd", "echo", "fd", "which"];
 const ROUTINE_NOTICES: &[&str] = &["Loaded playbooks", "Scout finished", "Routing to", "Working in", "Challenger is questioning", "steering received", "Context compacted", "Cache had expired"];
 pub const TIPS: &[&str] = &[
     "@path attaches a file · Tab completes",
@@ -265,6 +264,8 @@ pub struct SideData {
     pub fresh: std::collections::HashSet<String>,
     pub running: Vec<(String, String, String)>,
     pub finished: Vec<(String, bool, String)>,
+    /// The todo list: (text, done, being worked on now).
+    pub todos: Vec<(String, bool, bool)>,
 }
 
 struct AgentRow {
@@ -318,7 +319,8 @@ struct State {
     status_rows: usize,
     /// The side panel is on screen and already lists every file read.
     side_panel: bool,
-    /// What the side panel lists: files read (with counts), files written (+, -, new), commands run (ok).
+    /// What the side panel lists: files read (with counts), files written (+, -, new), and everything else zerd ran (ok):
+    /// shell commands as typed, other tools by label, e.g. `Search(needle)`.
     read_files: Vec<(String, usize)>,
     written: Vec<(String, (usize, usize, bool))>,
     commands: Vec<(String, bool)>,
@@ -429,6 +431,10 @@ impl Tui {
         let frame = SPIN[((wall * 10.0) as usize) % SPIN.len()];
         let tokens = if s.out_chars > 400 { format!("  ·  ↓ ~{:.1}k tokens", s.out_chars as f64 / 4000.0) } else { String::new() };
         let mut rows = vec![format!(" {} {}{}", bold_paint(&frame.to_string(), ACCENT), shimmer(&format!("{}…", s.phase), wall), paint(&format!("   {}s{tokens}  ·  ctrl+c to stop", now as i64), MUTED))];
+        let on_side = |part: &str| s.side_panel && super::layout::shown(part);
+        if on_side("agents") {
+            return Self::status_tail(s, rows);
+        }
         for a in s.agent_log.iter() {
             let (mark, color) = if a.ok { ("✓", MINT) } else { ("✗", CORAL) };
             rows.push(format!("   {} {}{}{}", paint(mark, color), bold_paint(&agent_title(&a.agent), FG), paint(&format!("  {}", a.goal), MUTED), paint(&format!("   {}", agent_stats(a.tools, a.tokens, a.seconds)), FAINT)));
@@ -445,7 +451,12 @@ impl Tui {
                 rows.push(format!("   {} {}", paint("╰", RULE), paint("starting…", MUTED)));
             }
         }
-        if !s.todos.is_empty() {
+        Self::status_tail(s, rows)
+    }
+
+    /// The task list under the spinner, unless the side panel's TASKS section already shows it.
+    fn status_tail(s: &State, mut rows: Vec<String>) -> Vec<String> {
+        if !s.todos.is_empty() && !(s.side_panel && super::layout::shown("tasks")) {
             let done = s.todos.iter().filter(|t| t.1).count();
             rows.push(format!("{}{}", bold_paint("   ✦ tasks ", LAVENDER), paint(&format!("{done}/{}", s.todos.len()), MUTED)));
             for (c, d, now) in s.todos.iter().take(8) {
@@ -700,9 +711,9 @@ impl Tui {
             }
             (args, s.quiet, s.expand, s.header_done)
         };
-        self.track(name, &args, success, metadata, diff);
+        self.track(call_id, name, &args, success, metadata, diff);
         let (summary, preview) = summarize_result(name, success, output, error, metadata, exit_code, &args);
-        if quiet && success && self.on_panel(call_id, name, &args) {
+        if quiet && success && self.on_panel(call_id, name) {
             self.st.lock().unwrap().header_done = false;
             return; // the side panel already lists it, so the conversation stays for what zerd says
         }
@@ -742,18 +753,22 @@ impl Tui {
         self.print_above(&rows.iter().map(|r| format!(" {} {r}", paint("│", color))).collect::<Vec<_>>().join("\n"));
     }
 
-    /// Is this call already listed on the side panel? Reads, writes, commands and sub-agents are, when their section
-    /// is showing. `grep` or `ls` aren't (the panel skips them), and a failure always prints, since that's news.
-    fn on_panel(&self, call_id: &str, name: &str, args: &Map<String, Value>) -> bool {
-        let s = self.st.lock().unwrap();
-        let part = match name {
+    /// Which side-panel section lists this call: reads, writes, sub-agents, the todo list, and COMMANDS for the rest
+    /// (shell, grep, ls, web fetches...). While that section is showing, the conversation leaves the call out, so it
+    /// keeps only what zerd says. A failure always prints anyway, since that's news.
+    fn panel_part(s: &State, call_id: &str, name: &str) -> &'static str {
+        match name {
             "read_file" => "read",
             "edit" | "write_file" => "written",
-            "shell" if !is_quiet_command(args.get("command").and_then(Value::as_str).unwrap_or("").trim()) => "commands",
+            "todos" => "tasks",
             _ if s.agents.contains_key(call_id) || s.agent_log.iter().any(|a| a.id == call_id) => "agents",
-            _ => return false,
-        };
-        s.side_panel && super::layout::shown(part)
+            _ => "commands",
+        }
+    }
+
+    fn on_panel(&self, call_id: &str, name: &str) -> bool {
+        let s = self.st.lock().unwrap();
+        s.side_panel && super::layout::shown(Self::panel_part(&s, call_id, name))
     }
 
     fn note_read(s: &mut State, path: String) {
@@ -765,17 +780,21 @@ impl Tui {
     }
 
     /// Feeds the side panel: files read, files written, commands run.
-    fn track(&self, name: &str, args: &Map<String, Value>, success: bool, md: &Map<String, Value>, diff: Option<&str>) {
+    fn track(&self, call_id: &str, name: &str, args: &Map<String, Value>, success: bool, md: &Map<String, Value>, diff: Option<&str>) {
         let cwd = self.cwd();
         let mut s = self.st.lock().unwrap();
-        let cmd = args.get("command").and_then(Value::as_str).unwrap_or("").trim().to_string();
-        let loud = |c: &str| c.split_whitespace().next().map_or(false, |w| !QUIET_COMMANDS.contains(&w));
+        // `cargo test` stays as typed; `grep` becomes `Search(needle)`
+        let cmd = match args.get("command").and_then(Value::as_str) {
+            Some(c) if name == "shell" => c.trim().to_string(),
+            _ => tool_label(name, args, &cwd),
+        };
+        if Self::panel_part(&s, call_id, name) == "commands" {
+            s.commands.push((cmd, success));
+            let k = format!("cmd:{}", s.commands.len() - 1);
+            s.touched.insert(k, Instant::now());
+            return;
+        }
         if !success {
-            if name == "shell" && !cmd.is_empty() && loud(&cmd) {
-                s.commands.push((cmd, false));
-                let k = format!("cmd:{}", s.commands.len() - 1);
-                s.touched.insert(k, Instant::now());
-            }
             return;
         }
         let raw = md.get("path").and_then(Value::as_str).or_else(|| args.get("path").and_then(Value::as_str)).unwrap_or("");
@@ -790,10 +809,6 @@ impl Tui {
                 None => s.written.push((path.clone(), (adds, dels, new))),
             }
             s.touched.insert(format!("write:{path}"), Instant::now());
-        } else if name == "shell" && !cmd.is_empty() && loud(&cmd) {
-            s.commands.push((cmd, true));
-            let k = format!("cmd:{}", s.commands.len() - 1);
-            s.touched.insert(k, Instant::now());
         }
     }
 
@@ -811,6 +826,7 @@ impl Tui {
             fresh: s.touched.iter().filter(|(_, t)| now.duration_since(**t).as_secs_f64() < 2.0).map(|(k, _)| k.clone()).collect(),
             running: s.agent_order.iter().filter_map(|id| s.agents.get(id)).map(|a| (a.agent.clone(), a.recent.back().cloned().unwrap_or_else(|| "starting…".into()), agent_stats(a.tools, a.tokens, a.started.elapsed().as_secs_f64()))).collect(),
             finished: s.agent_log.iter().map(|a| (a.agent.clone(), a.ok, agent_stats(a.tools, a.tokens, a.seconds))).collect(),
+            todos: s.todos.clone(),
         }
     }
 
@@ -899,10 +915,6 @@ impl Drop for Tui {
     }
 }
 
-pub fn is_quiet_command(cmd: &str) -> bool {
-    cmd.split_whitespace().next().map_or(false, |c| QUIET_COMMANDS.contains(&c))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -914,16 +926,19 @@ mod tests {
     #[test]
     fn calls_the_side_panel_lists_stay_out_of_the_conversation() {
         let t = Tui::new(Path::new("/tmp"));
-        let shell = |c: &str| args(json!({"command": c}));
         t.set_side_panel(true);
-        assert!(t.on_panel("1", "write_file", &args(json!({"path": "a.rs"}))));
-        assert!(t.on_panel("2", "shell", &shell("cargo test")));
-        assert!(!t.on_panel("3", "shell", &shell("grep -rn foo src"))); // the panel skips grep, so it still prints
-        assert!(!t.on_panel("4", "graph", &args(json!({}))));
+        assert!(t.on_panel("1", "write_file"));
+        assert!(t.on_panel("2", "shell"));
+        assert!(t.on_panel("3", "grep")); // grep and ls land in COMMANDS too, so they don't clutter the conversation
+        assert!(t.on_panel("4", "todos")); // the TASKS section has it
         t.agent_progress("5", &json!({"kind": "start", "agent": "scout", "goal": "map it"}));
-        assert!(t.on_panel("5", "scout", &args(json!({}))));
+        assert!(t.on_panel("5", "scout"));
+        t.track("6", "grep", &args(json!({"pattern": "needle"})), true, &Map::new(), None);
+        t.track("7", "shell", &args(json!({"command": "ls -la"})), false, &Map::new(), None);
+        let cmds = t.snapshot_side().commands;
+        assert_eq!(cmds, vec![("Search(needle)".to_string(), true), ("ls -la".to_string(), false)]);
         t.set_side_panel(false); // narrow terminal or F3: nothing is on the right, so everything prints
-        assert!(!t.on_panel("2", "shell", &shell("cargo test")));
+        assert!(!t.on_panel("2", "shell"));
     }
 
     #[test]
