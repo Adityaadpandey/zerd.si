@@ -778,7 +778,7 @@ impl Agent {
 
             if let Some(fr) = &final_response {
                 // "say the word and I will..." after a clear request makes the user type "ok do it"; send it back once
-                if self.wants_change && !self.is_review && !self.capped_last && !pushed_once && seeks_permission(fr) {
+                if self.wants_change && !self.is_review && !self.capped_last && !pushed_once && seeks_permission(fr) && !crate::agent::routing_policy::asks_how(&self.last_request) {
                     pushed_once = true;
                     self.nudged("asked_permission");
                     notice(&tx, "The answer asked permission for a clear step; sending it back to do it");
