@@ -61,6 +61,16 @@ fn proof_command() -> &'static Re {
     R.get_or_init(|| lit(r"\b(python3? (-c|\S+\.py)|node (-e|--check|\S+\.[cm]?js)|(tsx|ts-node|deno run|deno check|deno test) \S|bun \S+\.[cm]?[jt]sx?|(ba)?sh (-n )?\S+\.sh|php -l|ruby (-c|\S+\.rb)|curl )"))
 }
 
+/// Files an eslint command was handed but does not look at with a usual setup: `pnpm exec eslint app/page.tsx
+/// app/globals.css` passes whatever is in globals.css. Returns a note naming them, or None.
+fn unchecked_by_eslint(cmd: &str) -> Option<String> {
+    if !cmd.split_whitespace().any(|w| w == "eslint" || w.ends_with("/eslint")) {
+        return None;
+    }
+    let skipped: Vec<&str> = cmd.split_whitespace().map(|w| w.trim_matches(|c| c == '"' || c == '\'')).filter(|w| [".css", ".scss", ".less", ".html", ".md", ".mdx", ".json", ".yml", ".yaml"].iter().any(|s| w.ends_with(s))).collect();
+    (!skipped.is_empty()).then(|| format!("\n[note: eslint does not check {} here, so a pass says nothing about {}. Their per-edit diagnostics are the check, or read the lines back.]", skipped.join(", "), if skipped.len() == 1 { "it" } else { "them" }))
+}
+
 fn text_call() -> &'static Re {
     static R: OnceLock<Re> = OnceLock::new();
     R.get_or_init(|| {
@@ -1827,6 +1837,10 @@ impl Agent {
                     let what = if cmd.is_empty() { format!("{} {}", tc.name, tc.arguments.get("path").and_then(|p| p.as_str()).unwrap_or("")) } else { format!("`{}`", crate::util::text::head_chars(&cmd, 120)) };
                     self.unasked.push(what.trim().to_string());
                 }
+                let mut result = result;
+                if let Some(note) = unchecked_by_eslint(&cmd) {
+                    result.output.push_str(&note); // or "eslint passed" gets reported as if globals.css was checked
+                }
                 if tc.name == "shell" && check_command().is_match(&cmd) {
                     // ponytail: matched on the exact command text, so a failing `npm test -- -t foo` is not cleared by a
                     // later plain `npm test`. That costs one extra nudge at most; compare by tool and target if it gets noisy.
@@ -1858,6 +1872,14 @@ mod tests {
         assert!(!text_call().is_match("plain answer"));
         assert!(overflow().is_match("This model's maximum context length is 8192 tokens"));
         assert!(not_overflow().is_match("rate limit: too many tokens per minute"));
+    }
+
+    #[test]
+    fn eslint_handed_css_says_it_did_not_check_it() {
+        let note = unchecked_by_eslint("pnpm exec eslint --quiet app/page.tsx app/globals.css content/work.ts").unwrap();
+        assert!(note.contains("app/globals.css") && !note.contains("page.tsx"), "{note}");
+        assert!(unchecked_by_eslint("pnpm exec eslint --quiet app/page.tsx").is_none());
+        assert!(unchecked_by_eslint("cat app/globals.css").is_none());
     }
 }
 
