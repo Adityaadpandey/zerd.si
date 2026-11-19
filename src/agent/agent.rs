@@ -1224,7 +1224,10 @@ impl Agent {
                     // unread candidates turn into guessed HIGHs at the cap: spend what is left on the best two
                     format!("Budget check: {} of {limit} tool rounds used. Pick the two candidates most likely to be real defects and use the remaining rounds, in parallel, to read the code that proves or refutes each. Drop the rest: an unread candidate is not a finding. Keep any notes to 5 lines (candidate, file:line, checked or not; no severity).", self.calls_used)
                 } else if !self.read_only {
-                    format!("Budget check: {} of {limit} tool rounds used. Fix the HIGH items first, batch the remaining edits and checks into parallel calls, and list anything you will not get to so the user can decide.", self.calls_used)
+                    // "HIGH items" only means something when the request carries review findings; on a copy edit it
+                    // had the model answer "no high-priority defects have been reported"
+                    let lead = if self.last_request.contains("HIGH") || self.last_request.to_lowercase().contains("finding") { "Fix the HIGH items first" } else { "Finish the change you are on" };
+                    format!("Budget check: {} of {limit} tool rounds used. {lead}, batch the remaining edits and checks into parallel calls, and list anything you will not get to so the user can decide.", self.calls_used)
                 } else {
                     format!("Budget check: {} of {limit} tool rounds used. Put every lookup you still need into your next turn as parallel calls, then answer. Before reading more, jot short working notes (candidate, file:line, checked or not; no severity, nothing called verified until you read the code that proves it): old tool results get cleared, your own text stays. If the task asks for an output file, write it now, then refine it.", self.calls_used)
                 };
@@ -1422,9 +1425,12 @@ impl Agent {
                 self.session.loop_detector.lock().unwrap().record_response(&response_text);
             }
 
-            self.quiet_rounds = if response_text.is_empty() { self.quiet_rounds + 1 } else { 0 };
             self.todo_idle = if tool_calls.iter().any(|tc| tc.name == "todos") { 0 } else { self.todo_idle + 1 };
             let edits = tool_calls.iter().any(|tc| tc.name == "edit" || tc.name == "write_file");
+            // an edit or a note is the work written down, so it is not a quiet round (the checkpoint once fired
+            // "you have written nothing down" right after an edit)
+            let wrote = edits || tool_calls.iter().any(|tc| tc.name == "notes");
+            self.quiet_rounds = if response_text.is_empty() && !wrote { self.quiet_rounds + 1 } else { 0 };
             self.edited = self.edited || edits;
             self.calls_used += 1; // one round trip however many calls it holds: reading 5 files at once costs what reading 1 does
             if edits {
