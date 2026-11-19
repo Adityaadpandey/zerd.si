@@ -768,6 +768,25 @@ async fn silent_rounds_get_a_write_down_checkpoint_and_a_fix_now_nudge() {
     assert_eq!(said.iter().filter(|c| c.contains("nothing is changed yet")).count(), 1); // once, at round 15
 }
 
+/// An edit is the work written down: seven quiet reads, an edit, then seven more reads never add up to the eight quiet
+/// rounds that trigger "you have looked things up for several rounds without writing anything down".
+#[tokio::test]
+async fn an_edit_round_resets_the_write_down_checkpoint() {
+    let tmp = tempfile::tempdir().unwrap();
+    for i in 0..14 {
+        std::fs::write(tmp.path().join(format!("f{i}.txt")), format!("file {i}")).unwrap();
+    }
+    let read = |i: usize| call_as("read_file", json!({"path": format!("f{i}.txt")}), &format!("c{i}"));
+    let mut script: Vec<_> = (0..7).map(read).collect();
+    script.push(call_as("edit", json!({"path": "f0.txt", "old_string": "file 0", "new_string": "file zero"}), "e0"));
+    script.extend((7..14).map(read));
+    script.push(text("done"));
+    let mut agent = scripted(cfg(tmp.path(), json!({})), script).await;
+    run(&mut agent, "tidy the wording in the files").await;
+    let said = user_messages(&agent);
+    assert!(!said.iter().any(|c| c.contains("Checkpoint:")), "{said:?}");
+}
+
 #[tokio::test]
 async fn a_review_that_argues_with_itself_is_rewritten_without_another_loop_round() {
     let tmp = tempfile::tempdir().unwrap();
