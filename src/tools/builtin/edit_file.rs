@@ -45,6 +45,46 @@ impl EditTool {
     }
 }
 
+/// The tag an element opens with, if `s` (trimmed) starts with one: "<li className=x>" -> "li".
+fn opening_tag(s: &str) -> Option<&str> {
+    let rest = s.trim_start().strip_prefix('<')?;
+    let name = &rest[..rest.find(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '.').unwrap_or(rest.len())];
+    (!name.is_empty()).then_some(name)
+}
+
+/// Structure an edit lost at its edges, said plainly so the model fixes it before moving on. These are the three slips
+/// from one real session, none of which lint caught:
+/// - CSS: old ".hero h1 {\n  max-width: 21ch;\n}\n.hero .lead {" -> new "  max-width: 23ch;\n}\n.hero .lead {" (selector gone)
+/// - JSX: old "<li>I brought latency ...</li>" -> new "Latency fell ..." (the list item's tags gone)
+/// - TS: a new_string ending in `",` where the file already had the comma, leaving `",,`
+fn structure_warnings(pairs: &[(String, String)], old_file: &str, new_file: &str) -> Vec<String> {
+    let mut out = vec![];
+    let label = |i: usize| if pairs.len() > 1 { format!("edit {}", i + 1) } else { "this edit".to_string() };
+    for (i, (old, new)) in pairs.iter().enumerate() {
+        if old.is_empty() {
+            continue;
+        }
+        for (open, close) in [('{', '}'), ('(', ')'), ('[', ']')] {
+            let net = |s: &str| s.matches(open).count() as i64 - s.matches(close).count() as i64;
+            if net(old) != net(new) {
+                out.push(format!("{} changes the {open}{close} balance (old_string nets {:+}, new_string {:+}): a selector, block or call may have lost its opening or closing line.", label(i), net(old), net(new)));
+            }
+        }
+        if let Some(tag) = opening_tag(old) {
+            let closes = old.trim_end().ends_with(&format!("</{tag}>"));
+            if closes && opening_tag(new) != Some(tag) && !new.trim().is_empty() {
+                out.push(format!("{} replaced a whole <{tag}>...</{tag}> but new_string has no <{tag}> wrapper: if only the text inside was meant to change, put the tags back.", label(i)));
+            }
+        }
+    }
+    for seam in [",,", ";;"] {
+        if new_file.matches(seam).count() > old_file.matches(seam).count() {
+            out.push(format!("the file now has a new `{seam}`: new_string probably repeats punctuation the file already had right after the match."));
+        }
+    }
+    out
+}
+
 #[async_trait]
 impl Tool for EditTool {
     fn name(&self) -> &str {
@@ -110,11 +150,42 @@ impl Tool for EditTool {
         // a changed or removed signature comes with the places that use it, straight from the graph
         let uses = if is_new { None } else { crate::util::symgraph::edit_note(&inv.cwd, &path, &old, &new) };
         let note = format!("{note}{}", uses.map_or(String::new(), |u| format!("\n{u}")));
+        let warns = if is_new { vec![] } else { structure_warnings(&Self::pairs(&inv.params), &old, &new) };
+        let note = if warns.is_empty() { note } else { format!("{note}\nCHECK: {}\nRead the edited lines back before the next change.", warns.join("\nCHECK: ")) };
         let mut r = ToolResult::ok_with(
             format!("{verb} {}{note}", path.display()),
             json!({"path": path.to_string_lossy(), "replaced_count": n, "line_diff": delta, "is_new_file": is_new}),
         );
         r.diff = Some(FileDiff { path, old_content: old, new_content: new, is_new_file: is_new, is_deletion: false });
         r
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::structure_warnings;
+    fn warn(old: &str, new: &str, before: &str, after: &str) -> Vec<String> {
+        structure_warnings(&[(old.into(), new.into())], before, after)
+    }
+
+    #[test]
+    fn the_three_slips_from_the_portfolio_session_are_flagged() {
+        // CSS selector dropped, leaving a stray declaration outside any rule
+        let w = warn(".hero h1 {\n  max-width: 21ch;\n}\n.hero .lead {", "  max-width: 23ch;\n}\n.hero .lead {", "", "");
+        assert!(w.iter().any(|m| m.contains("{} balance")), "{w:?}");
+        // the <li> wrapper dropped from a list item
+        let w = warn("<li>I brought latency down.</li>", "Latency fell.", "", "");
+        assert!(w.iter().any(|m| m.contains("<li>")), "{w:?}");
+        // a trailing comma doubled at the seam
+        let w = warn("lede: \"old\"", "lede: \"new\",", "lede: \"old\",\n", "lede: \"new\",,\n");
+        assert!(w.iter().any(|m| m.contains(",,")), "{w:?}");
+    }
+
+    #[test]
+    fn ordinary_edits_stay_quiet() {
+        assert!(warn("<li>I brought latency down.</li>", "<li>Latency fell.</li>", "", "").is_empty());
+        assert!(warn(".hero h1 {\n  max-width: 21ch;\n}", ".hero h1 {\n  max-width: 23ch;\n}", "", "").is_empty());
+        assert!(warn("fn a() {\n  x();\n}\n", "", "", "").is_empty()); // deleting a whole block is balanced
+        assert!(warn("<li>old</li>", "", "", "").is_empty()); // deleting the item outright is fine too
     }
 }
