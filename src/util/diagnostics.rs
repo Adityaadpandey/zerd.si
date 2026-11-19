@@ -6,6 +6,7 @@
 //!   .ts .tsx .mts .cts  the project's own tsserver (node_modules/typescript), kept running: real type errors
 //!   .js .mjs .cjs `node --check` (JSX is left to the end-of-run eslint)
 //!   .go          `gofmt -e`
+//!   .css         an in-process brace walk (stray `}`, unclosed `{`, a declaration outside any rule)
 use crate::util::re::{lit, lit_i};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -262,6 +263,76 @@ fn data(path: &Path, text: &str) -> Vec<String> {
     }
 }
 
+/// Plain CSS has no checker in most repos (eslint skips it), so walk the braces: a `}` with nothing open, a `{` never
+/// closed, and a declaration sitting outside every rule. That last one is what an edit leaves when it drops a selector:
+/// ".hero h1 {\n  max-width: 21ch;\n}" edited down to "  max-width: 23ch;\n}" gives "2:1 declaration outside any rule".
+/// Comments and strings are skipped; top-level at-rules ending in `;` (@import, @charset) are fine.
+fn css(text: &str) -> Vec<String> {
+    let (mut out, mut open, mut buf) = (vec![], vec![], String::new());
+    let (mut line, mut buf_line) = (1usize, 1usize);
+    let mut it = text.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '\n' => {
+                line += 1;
+                buf.push(c);
+            }
+            '/' if it.peek() == Some(&'*') => {
+                it.next();
+                let mut prev = ' ';
+                for d in it.by_ref() {
+                    if d == '\n' {
+                        line += 1;
+                    }
+                    if prev == '*' && d == '/' {
+                        break;
+                    }
+                    prev = d;
+                }
+            }
+            '"' | '\'' => {
+                buf.push(c);
+                let mut esc = false;
+                for d in it.by_ref() {
+                    buf.push(d);
+                    if d == '\n' {
+                        line += 1;
+                    }
+                    if !esc && d == c {
+                        break;
+                    }
+                    esc = !esc && d == '\\';
+                }
+            }
+            '{' => {
+                open.push(line);
+                buf.clear();
+            }
+            '}' => {
+                if open.pop().is_none() {
+                    out.push(format!("{line}:1 unexpected `}}` with no rule open"));
+                }
+                buf.clear();
+            }
+            ';' => {
+                let decl = buf.trim();
+                if open.is_empty() && !decl.is_empty() && !decl.starts_with('@') {
+                    out.push(format!("{buf_line}:1 declaration outside any rule: `{}`", crate::util::text::head_chars(decl, 60)));
+                }
+                buf.clear();
+            }
+            _ => {
+                if buf.trim().is_empty() && !c.is_whitespace() {
+                    buf_line = line;
+                }
+                buf.push(c);
+            }
+        }
+    }
+    out.extend(open.iter().map(|l| format!("{l}:1 `{{` is never closed")));
+    out
+}
+
 pub async fn problems(path: &Path, text: &str, cwd: &Path) -> Vec<String> {
     let suffix = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
     match suffix.as_str() {
@@ -271,6 +342,7 @@ pub async fn problems(path: &Path, text: &str, cwd: &Path) -> Vec<String> {
         "go" => go(path, text, cwd).await,
         "rs" => rust(path, text, cwd).await,
         "json" | "toml" => data(path, text),
+        "css" => css(text),
         _ => vec![],
     }
 }
@@ -315,5 +387,17 @@ mod tests {
         let found = new_problems(Path::new("a.rs"), Some("fn main() {}\n"), "fn main() {\n    foo(\n}\n", &dir).await;
         assert!(found.iter().any(|p| p.starts_with("2:8 mismatched closing delimiter")), "{found:?}");
         assert!(new_problems(Path::new("a.rs"), None, "fn main() { let x = 1; }\n", &dir).await.is_empty());
+    }
+
+    #[test]
+    fn css_with_a_dropped_selector_is_caught_and_sound_css_is_quiet() {
+        // the portfolio edit: the `.hero h1 {` line went, its declaration and `}` stayed
+        let broken = "/* home */\n.hero { padding: 0; }\n  max-width: 23ch;\n}\n.hero .lead {\n  color: red;\n}\n";
+        let found = css(broken);
+        assert!(found.iter().any(|p| p.starts_with("3:1 declaration outside any rule: `max-width: 23ch`")), "{found:?}");
+        assert!(found.iter().any(|p| p.starts_with("4:1 unexpected `}`")), "{found:?}");
+        assert!(css(".a {\n  color: red;\n").iter().any(|p| p.starts_with("1:1 `{` is never closed")));
+        let sound = "@import url(\"x.css\");\n@media (max-width: 560px) {\n  .a { content: \"}\"; }\n}\n/* ; } */\n.b{c:d}\n";
+        assert!(css(sound).is_empty(), "{:?}", css(sound));
     }
 }
