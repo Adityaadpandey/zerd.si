@@ -55,7 +55,7 @@ async fn large_file_is_truncated_not_unreadable() {
     let mut a = scripted(cfg(tmp.path(), json!({"pi_mode": false, "auto_verify": false})), vec![call("read_file", json!({"path": "big.txt"})), text("ok")]).await;
     let evs = run(&mut a, "read").await;
     let done = evs.iter().find_map(|e| if let AgentEvent::ToolCallComplete { result, .. } = e { Some(result) } else { None }).unwrap();
-    assert!(done.success && done.output.contains("truncated"));
+    assert!(done.success && done.output.contains("continue with offset=") && !done.output.contains("chars omitted"));
     assert!(done.output.len() < 60_000);
 }
 
@@ -247,10 +247,31 @@ async fn overlapping_reads_return_only_the_lines_not_already_in_context() {
     let out = read(json!({"offset": 101, "limit": 200})).await; // 101-200 already seen, 201-300 new
     assert!(out.contains("201|line201") && !out.contains("107|line107") && out.contains("already in context"), "{out}");
     assert!(read(json!({"offset": 30, "limit": 200})).await.contains("unchanged and already in context"));
-    let out = read(json!({})).await; // whole file: only 301-1000 is new
-    assert!(out.contains("1000|line1000") && !out.contains("\n2|line2\n") && out.contains("[lines 1-300 already"), "{}", &out[..200.min(out.len())]);
+    // whole file: only 301-1000 is new, and that is past the 8k output cap, so it stops on a whole line with the offset
+    // to go on from (it used to come back whole and then lose its middle to the registry's cut)
+    let out = read(json!({})).await;
+    assert!(out.contains("301|line301") && !out.contains("\n2|line2\n") && out.contains("[lines 1-300 already") && out.contains("continue with offset="), "{}", &out[..200.min(out.len())]);
+    assert!(read(json!({"offset": 931, "limit": 70})).await.contains("1000|line1000"));
     std::fs::write(tmp.path().join("f.txt"), file("changed")).unwrap();
     assert!(read(json!({"offset": 1, "limit": 200})).await.contains("1|changed")); // file changed: forget the map
+}
+
+/// The portfolio session: a 200-line read of long lines went over the 8k tool-output cap, the registry cut its middle,
+/// and the re-reads all said "already in context" for lines the model never got. read_file now cuts first, on whole
+/// lines, so what it marks as seen is what actually arrived.
+#[tokio::test]
+async fn a_read_over_the_output_cap_only_marks_the_lines_that_arrived() {
+    let tmp = tempfile::tempdir().unwrap();
+    let body = (1..=453).map(|i| format!("{i:03} {}", "x".repeat(80))).collect::<Vec<_>>().join("\n");
+    std::fs::write(tmp.path().join("work.ts"), body + "\n").unwrap();
+    let a = scripted(cfg(tmp.path(), json!({"pi_mode": false, "tool_output_max_chars": 8000})), vec![]).await;
+    let (reg, hs, dir) = (a.session.tool_registry.clone(), &a.session.hook_system, tmp.path().to_path_buf());
+    let first = reg.invoke("read_file", json!({"path": "work.ts", "offset": 1, "limit": 200}), &dir, hs, None, "").await.output;
+    assert!(first.len() <= 8000 && !first.contains("chars omitted"), "the registry still trimmed it: {}", &first[first.len() - 200..]);
+    let upto: usize = first.split("cut at line ").nth(1).and_then(|s| s.split(' ').next()).and_then(|n| n.parse().ok()).expect(&first[first.len() - 200..]);
+    assert!(first.contains(&format!("{upto}|")) && !first.contains(&format!("\n{}|", upto + 1)));
+    let again = reg.invoke("read_file", json!({"path": "work.ts", "offset": 1, "limit": 200}), &dir, hs, None, "").await.output;
+    assert!(again.contains(&format!("{}|", upto + 1)) && !again.contains("unchanged and already in context"), "{}", &again[..300]);
 }
 
 #[tokio::test]

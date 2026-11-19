@@ -3,7 +3,6 @@ use crate::tools::{schema_of, Tool, ToolInvocation, ToolKind, ToolResult};
 use crate::util::outline::outline;
 use crate::util::paths::{is_binary_file, resolve_path};
 use crate::util::search::similar_paths;
-use crate::util::text::estimate_tokens;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use std::any::Any;
@@ -294,7 +293,8 @@ impl Tool for ReadFileTool {
         if let Some(old) = &old_lines {
             if have_empty && offset == 1 && limit.is_none() && *old != lines_owned {
                 let diff = Self::unified(old, &lines_owned);
-                if (diff.len() as f64) < 0.6 * content.len() as f64 {
+                // the diff has to fit too, or the registry trims it and the model misses changes it is told it has
+                if (diff.len() as f64) < 0.6 * content.len() as f64 && diff.len() < cfg.tool_output_max_chars.saturating_sub(400) {
                     st.seen.get_mut(&key).unwrap().1.push((1, total));
                     st.snap.insert(key, (inv.epoch, lines_owned));
                     return ToolResult::ok_with(
@@ -324,8 +324,11 @@ impl Tool for ReadFileTool {
         }
         let mut output = formatted.join("\n");
         let mut truncated = false;
-        if estimate_tokens(&output) > MAX_OUTPUT_TOKENS {
-            let cap = MAX_OUTPUT_TOKENS * 4;
+        // Cut here, on whole lines, at the registry's own limit (minus room for the header), never above it. If the
+        // registry trimmed the middle instead, lines 60-140 of a 200-line read would be marked seen without the model
+        // ever getting them, and every re-read would answer "already in context" for text it never saw.
+        let cap = (MAX_OUTPUT_TOKENS * 4).min(cfg.tool_output_max_chars.saturating_sub(400));
+        if output.len() > cap {
             let mut cut = String::new();
             for l in output.split('\n') {
                 if cut.len() + l.len() + 1 > cap {
@@ -334,7 +337,9 @@ impl Tool for ReadFileTool {
                 cut.push_str(l);
                 cut.push('\n');
             }
-            output = format!("{}\n... [truncated; file has {total} lines. Re-read a slice with offset/limit]", cut.trim_end());
+            let upto = cut.lines().filter_map(|l| l.split_once('|').and_then(|(n, _)| n.parse::<usize>().ok())).last().unwrap_or(start_idx);
+            output = format!("{}\n... [cut at line {upto} to fit; continue with offset={}]", cut.trim_end(), upto + 1);
+            end_idx = end_idx.min(upto.max(start_idx + 1));
             truncated = true;
         }
         // what actually reached the model (truncation may cut it)
