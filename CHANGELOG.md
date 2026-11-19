@@ -4,6 +4,8 @@ All notable changes to zerd. Newest first. Versions follow [semver](https://semv
 
 ## Unreleased
 
+- `/loop <task>` keeps working on a task without asking for approval and goes again with what is still failing, until the checks pass, six rounds pass or you press Ctrl+C.
+
 ## 0.1.4
 
 - Drop a screenshot into the input and zerd attaches it. An `[image: path]` line in a message goes to the model as a picture. Resumed sessions show only what you typed, not the nudges zerd sent.
