@@ -4,7 +4,7 @@ All notable changes to zerd. Newest first. Versions follow [semver](https://semv
 
 ## Unreleased
 
-- `/loop <task>` keeps working on a task without asking for approval and goes again with what is still failing, until the checks pass, six rounds pass or you press Ctrl+C.
+- `/loop <task>` works with no approval prompts and no round limit. It first writes a brief to `.zerd/loop/` with the goal, the starting state and a "done when" list of commands that must pass, then repeats until each item is proven or you press Ctrl+C.
 
 ## 0.1.4
 

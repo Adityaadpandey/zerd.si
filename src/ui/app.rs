@@ -813,30 +813,46 @@ impl Cli {
         result.is_none()
     }
 
-    /// `/loop <task>`: keep going on one task with no approval prompts until its checks pass.
-    /// Example: `/loop make the parser tests pass` runs, sees `verification_failed`, tells zerd
-    /// what is still red and goes again, up to LOOP_ROUNDS times. Ctrl+C stops it.
+    /// `/loop <task>`: no approval prompts and no round limit. First a turn writes a brief file
+    /// (.zerd/loop/<time>.md) holding the goal, the exact "done when" list and a progress log.
+    /// Every later turn works from that file and flips `STATUS: DONE` only when each "done when"
+    /// line is proven. Example: `/loop make the parser tests pass` -> brief says "done when
+    /// `cargo test parser` exits 0" -> rounds repeat until it does. Ctrl+C is the only other way out.
     async fn run_loop(&mut self, task: &str) {
-        const LOOP_ROUNDS: usize = 6;
         let mgr = self.agent().session.approval_manager.clone();
         let before = mgr.policy();
         mgr.set_policy(ApprovalPolicy::Auto); // nobody to ask mid-loop, so approve what is safe to approve
-        let mut prompt = task.to_string();
-        let mut stop = format!("stopped after {LOOP_ROUNDS} rounds without a passing result");
-        for round in 1..=LOOP_ROUNDS {
-            uprintln!("{}", paint(&format!("  loop {round}/{LOOP_ROUNDS}"), MUTED));
-            if self.run_turn(&prompt).await {
-                stop = "interrupted".into();
-                break;
+        let rel = format!(".zerd/loop/{}.md", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+        let file = self.config.get().cwd.join(&rel);
+        let mut stop = "interrupted".to_string();
+        let brief = format!(
+            "Do not change any code yet. Look around the repo, then write the file {rel} with these sections:\n\
+             # Goal\n(the task in one or two sentences)\n\
+             # Start\n(what is true right now: what exists, what fails, what you found)\n\
+             # Done when\n(a checklist of results that can be proven by running something, each with the exact command and what it must show)\n\
+             # Progress\n(empty for now)\n\
+             STATUS: IN PROGRESS\n\n\
+             Task: {task}"
+        );
+        if !self.run_turn(&brief).await {
+            let mut round = 0;
+            loop {
+                round += 1;
+                uprintln!("{}", paint(&format!("  loop round {round}  ({rel})"), MUTED));
+                let prompt = format!(
+                    "Work on the task using {rel}. Read it first. Do the next part of the work, then add a line under # Progress saying what you did and what is left. \
+                     When every 'Done when' item is proven by actually running its command, change the last line to `STATUS: DONE`. Not before.\n\nTask: {task}"
+                );
+                if self.run_turn(&prompt).await {
+                    break;
+                }
+                let status = self.last_report.as_ref().and_then(|r| r["status"].as_str()).unwrap_or("").to_string();
+                let done = std::fs::read_to_string(&file).map_or(false, |t| t.lines().any(|l| l.trim() == "STATUS: DONE"));
+                if done && !matches!(status.as_str(), "failed" | "verification_failed") {
+                    stop = "finished: every 'Done when' item is marked proven".into();
+                    break;
+                }
             }
-            let report = self.last_report.clone().unwrap_or(Value::Null);
-            let status = report["status"].as_str().unwrap_or("").to_string();
-            if !matches!(status.as_str(), "failed" | "verification_failed") {
-                stop = format!("finished: {}", if status.is_empty() { "done" } else { &status });
-                break;
-            }
-            let bad: Vec<String> = report["checks"].as_array().cloned().unwrap_or_default().iter().filter(|c| c["ok"] != true).filter_map(|c| c["command"].as_str().map(String::from)).collect();
-            prompt = format!("The task is not done yet (status: {status}). Still failing: {}. Keep going on: {task}", if bad.is_empty() { "see the last result".into() } else { bad.join("; ") });
         }
         mgr.set_policy(before);
         uprintln!("{}", paint(&format!("  loop {stop}"), if stop.starts_with("finished") { MINT } else { AMBER }));
@@ -1228,7 +1244,7 @@ impl Cli {
             }
             "/loop" => {
                 if args.is_empty() {
-                    uprintln!("{}", paint("Usage: /loop <task>. zerd keeps working on it without asking until the checks pass.", MUTED));
+                    uprintln!("{}", paint("Usage: /loop <task>. zerd writes a brief file with the goal and what done means, then keeps working without asking until it is proven.", MUTED));
                 } else {
                     self.run_loop(&args).await;
                 }

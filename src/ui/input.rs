@@ -32,7 +32,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/skills", "list project playbooks"),
     ("/update", "install the newest zerd release; it takes over the next time zerd starts"),
     ("/layout", "show or hide parts of the full-screen layout: /layout read off, /layout reset (F3 flips the side panel)"),
-    ("/loop", "keep working on a task without asking until its checks pass: /loop fix the failing tests"),
+    ("/loop", "work on a task with no prompts and no limit, from a brief file that says when it is done: /loop fix the failing tests"),
     ("/verbose", "switch between quiet output (default) and full tool output"),
     ("/challenge", "a second model argues against your idea"),
     ("/mcp", "MCP server status"),
