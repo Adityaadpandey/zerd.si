@@ -777,7 +777,7 @@ impl Cli {
     }
 
     /// Run one request, with Ctrl+C cancelling the agent and not the app.
-    async fn run_turn(&mut self, text: &str) {
+    async fn run_turn(&mut self, text: &str) -> bool {
         // full-screen mode gets Ctrl+C as a key, not a signal
         let cancel = fullscreen::current().map(|f| f.begin_turn());
         let result = {
@@ -810,6 +810,36 @@ impl Cli {
         for n in notes {
             Box::pin(self.run_turn(&n)).await;
         }
+        result.is_none()
+    }
+
+    /// `/loop <task>`: keep going on one task with no approval prompts until its checks pass.
+    /// Example: `/loop make the parser tests pass` runs, sees `verification_failed`, tells zerd
+    /// what is still red and goes again, up to LOOP_ROUNDS times. Ctrl+C stops it.
+    async fn run_loop(&mut self, task: &str) {
+        const LOOP_ROUNDS: usize = 6;
+        let mgr = self.agent().session.approval_manager.clone();
+        let before = mgr.policy();
+        mgr.set_policy(ApprovalPolicy::Auto); // nobody to ask mid-loop, so approve what is safe to approve
+        let mut prompt = task.to_string();
+        let mut stop = format!("stopped after {LOOP_ROUNDS} rounds without a passing result");
+        for round in 1..=LOOP_ROUNDS {
+            uprintln!("{}", paint(&format!("  loop {round}/{LOOP_ROUNDS}"), MUTED));
+            if self.run_turn(&prompt).await {
+                stop = "interrupted".into();
+                break;
+            }
+            let report = self.last_report.clone().unwrap_or(Value::Null);
+            let status = report["status"].as_str().unwrap_or("").to_string();
+            if !matches!(status.as_str(), "failed" | "verification_failed") {
+                stop = format!("finished: {}", if status.is_empty() { "done" } else { &status });
+                break;
+            }
+            let bad: Vec<String> = report["checks"].as_array().cloned().unwrap_or_default().iter().filter(|c| c["ok"] != true).filter_map(|c| c["command"].as_str().map(String::from)).collect();
+            prompt = format!("The task is not done yet (status: {status}). Still failing: {}. Keep going on: {task}", if bad.is_empty() { "see the last result".into() } else { bad.join("; ") });
+        }
+        mgr.set_policy(before);
+        uprintln!("{}", paint(&format!("  loop {stop}"), if stop.starts_with("finished") { MINT } else { AMBER }));
     }
 
     /// `!cmd` runs a command for the user and shows the output to the model; `!!cmd` keeps it private.
@@ -1195,6 +1225,13 @@ impl Cli {
                 let msg = crate::util::update::from_session().await;
                 self.tui.end_turn();
                 uprintln!("{}", paint(&format!("  {msg}"), MUTED));
+            }
+            "/loop" => {
+                if args.is_empty() {
+                    uprintln!("{}", paint("Usage: /loop <task>. zerd keeps working on it without asking until the checks pass.", MUTED));
+                } else {
+                    self.run_loop(&args).await;
+                }
             }
             "/verbose" => uprintln!("{}", paint(&format!("  output: {}", if self.tui.toggle_quiet() { "quiet" } else { "verbose" }), MUTED)),
             "/challenge" => {
