@@ -3684,7 +3684,7 @@ dependencies = [
 
 [[package]]
 name = "zerd"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "async-stream",
  "async-trait",

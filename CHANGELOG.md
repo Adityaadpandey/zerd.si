@@ -4,6 +4,15 @@ All notable changes to zerd. Newest first. Versions follow [semver](https://semv
 
 ## Unreleased
 
+## 0.1.4
+
+- Drop a screenshot into the input and zerd attaches it. An `[image: path]` line in a message goes to the model as a picture. Resumed sessions show only what you typed, not the nudges zerd sent.
+- The side panel holds the work and the conversation holds what zerd says. Text printed before the first frame wraps to the conversation pane.
+- Edits get sanity checks: CSS gets a brace check (a stray `}`, an unclosed `{`, a declaration outside any rule), and an edit that loses a selector line or a wrapping tag, or doubles a comma at its edge, says so. An eslint run handed CSS or Markdown files says it did not check them.
+- `read_file` is more forgiving: top-level data like `export const cases = [...]` is a symbol, `use-client.mdx` opens `use-client.md`, and a read over the output cap stops on a whole line.
+- `parallel_tasks` takes a single task and tasks without ids. A failed call shows the reason instead of the model's whole argument JSON.
+- Nudges fit the task: a question tucked into a work request rides along as a reminder, "just do it" is not pushed when you asked how, a content question does not trigger code review, and an edit resets the write-down checkpoint.
+
 ## 0.1.3
 
 - zerd checks once a day, when it opens in a terminal, whether a newer release is out and asks `Update now? [Y/n]`. Yes installs it next to the current binary and restarts on it. `zerd update` does the same on demand, and `/update` installs it from inside a session for the next start. `ZERD_NO_UPDATE_CHECK=1` turns the launch check off.
