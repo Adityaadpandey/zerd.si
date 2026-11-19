@@ -825,24 +825,30 @@ impl Cli {
         let rel = format!(".zerd/loop/{}.md", chrono::Local::now().format("%Y%m%d-%H%M%S"));
         let file = self.config.get().cwd.join(&rel);
         let mut stop = "interrupted".to_string();
+        // Pictures go out once, with the brief. Sending them every round would re-bill them on every call,
+        // so the brief turn writes down what they show and later rounds work from that text.
+        let shots = task.lines().filter(|l| l.trim().starts_with("[image: ")).count();
+                let see = if shots > 0 { "\nThe attached picture(s) will not be shown again, so describe in # Start everything in them that the work depends on (text, layout, colours, error messages)." } else { "" };
         let brief = format!(
             "Do not change any code yet. Look around the repo, then write the file {rel} with these sections:\n\
-             # Goal\n(the task in one or two sentences)\n\
+             # Goal\n(the task in one or two sentences, with every detail from it that the work needs)\n\
              # Start\n(what is true right now: what exists, what fails, what you found)\n\
              # Done when\n(a checklist of results that can be proven by running something, each with the exact command and what it must show)\n\
              # Progress\n(empty for now)\n\
-             STATUS: IN PROGRESS\n\n\
-             Task: {task}"
+             STATUS: IN PROGRESS{see}\n\nTask: {task}"
         );
         if !self.run_turn(&brief).await {
+            if shots > 0 {
+                self.agent().compact_now().await; // the brief file now carries the pictures, so drop them from the history
+            }
+            let prompt = format!(
+                "Continue the loop in {rel}. Read it, do the next part of the work, then add a line under # Progress saying what you did and what is left. \
+                 When every 'Done when' item is proven by actually running its command, change the last line to `STATUS: DONE`. Not before."
+            );
             let mut round = 0;
             loop {
                 round += 1;
                 uprintln!("{}", paint(&format!("  loop round {round}  ({rel})"), MUTED));
-                let prompt = format!(
-                    "Work on the task using {rel}. Read it first. Do the next part of the work, then add a line under # Progress saying what you did and what is left. \
-                     When every 'Done when' item is proven by actually running its command, change the last line to `STATUS: DONE`. Not before.\n\nTask: {task}"
-                );
                 if self.run_turn(&prompt).await {
                     break;
                 }
@@ -851,6 +857,14 @@ impl Cli {
                 if done && !matches!(status.as_str(), "failed" | "verification_failed") {
                     stop = "finished: every 'Done when' item is marked proven".into();
                     break;
+                }
+                // the file keeps the plan, so older rounds are dead weight in every later call
+                let (used, window) = {
+                    let cm = self.agent().session.context_manager.lock().unwrap();
+                    (cm.context_used(), cm.context_window)
+                };
+                if used * 2 > window {
+                    self.agent().compact_now().await;
                 }
             }
         }
@@ -1246,7 +1260,12 @@ impl Cli {
                 if args.is_empty() {
                     uprintln!("{}", paint("Usage: /loop <task>. zerd writes a brief file with the goal and what done means, then keeps working without asking until it is proven.", MUTED));
                 } else {
-                    self.run_loop(&args).await;
+                    // commands skip the normal attach step, so a dragged-in screenshot is turned into an [image:] line here
+                    let (task, shots) = attach_images(&args, &cfg.cwd, &get_data_dir().join("images"));
+                    if !shots.is_empty() {
+                        uprintln!("{}", paint(&format!("  attached: {}", shots.join(", ")), MUTED));
+                    }
+                    self.run_loop(&task).await;
                 }
             }
             "/verbose" => uprintln!("{}", paint(&format!("  output: {}", if self.tui.toggle_quiet() { "quiet" } else { "verbose" }), MUTED)),
