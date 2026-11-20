@@ -20,11 +20,95 @@ fn ask(prompt: &str) -> Option<String> {
     }
 }
 
-/// A numbered menu. Returns the 0-based pick, or None for skip/Ctrl-D. Enter picks `default`.
+/// A menu you move through with the arrow keys. Returns the 0-based pick, or None for skip (Esc) or Ctrl-C.
+/// Long lists scroll, and typing narrows them to the entries containing what you typed. Enter picks.
+/// Without a terminal it falls back to a numbered list.
 fn menu(title: &str, items: &[String], default: usize) -> Option<usize> {
+    use crossterm::event::{read, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::{cursor::MoveUp, execute, terminal::{self, Clear, ClearType}};
+    if items.is_empty() {
+        return None;
+    }
     println!("\n{}", bold_paint(title, LAVENDER));
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) || terminal::enable_raw_mode().is_err() {
+        return menu_numbered(items, default);
+    }
+    let filterable = items.len() > 9;
+    let mut filter = String::new();
+    let mut sel = default.min(items.len() - 1); // index into items
+    let mut drawn = 0u16;
+    let mut out = std::io::stdout();
+    let result = loop {
+        let shown: Vec<usize> = (0..items.len()).filter(|&i| filter.is_empty() || items[i].to_lowercase().contains(&filter.to_lowercase())).collect();
+        if !shown.is_empty() && !shown.contains(&sel) {
+            sel = shown[0];
+        }
+        let pos = shown.iter().position(|&i| i == sel).unwrap_or(0);
+        let rows = terminal::size().map(|s| s.1 as usize).unwrap_or(24).saturating_sub(5).clamp(3, 14);
+        let top = pos.saturating_sub(rows / 2).min(shown.len().saturating_sub(rows));
+        if drawn > 0 {
+            let _ = execute!(out, MoveUp(drawn), Clear(ClearType::FromCursorDown));
+        }
+        let mut lines = 0u16;
+        let hint = format!("↑/↓ move · Enter select · Esc skip{}  ({}/{})", if filterable { " · type to filter" } else { "" }, if shown.is_empty() { 0 } else { pos + 1 }, shown.len());
+        let _ = write!(out, "{}\r\n", paint(&hint, MUTED));
+        lines += 1;
+        if filterable {
+            let _ = write!(out, "{} {}\r\n", paint("filter:", MUTED), filter);
+            lines += 1;
+        }
+        if shown.is_empty() {
+            let _ = write!(out, "  {}\r\n", paint("nothing matches", AMBER));
+            lines += 1;
+        }
+        for &i in shown.iter().skip(top).take(rows) {
+            let _ = if i == sel { write!(out, "{} {}\r\n", bold_paint("❯", ACCENT), bold_paint(&items[i], ACCENT)) } else { write!(out, "  {}\r\n", items[i]) };
+            lines += 1;
+        }
+        let _ = out.flush();
+        drawn = lines;
+        let Ok(ev) = read() else { break None };
+        let Event::Key(k) = ev else { continue };
+        if k.kind == KeyEventKind::Release {
+            continue;
+        }
+        let page = rows.max(1);
+        let mv = |delta: isize| -> Option<usize> { shown.get((pos as isize + delta).clamp(0, shown.len() as isize - 1) as usize).copied() };
+        match k.code {
+            KeyCode::Enter if !shown.is_empty() => break Some(sel),
+            KeyCode::Esc => break None,
+            KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => break None,
+            KeyCode::Up if !shown.is_empty() => sel = mv(-1).unwrap_or(sel),
+            KeyCode::Down if !shown.is_empty() => sel = mv(1).unwrap_or(sel),
+            KeyCode::PageUp if !shown.is_empty() => sel = mv(-(page as isize)).unwrap_or(sel),
+            KeyCode::PageDown if !shown.is_empty() => sel = mv(page as isize).unwrap_or(sel),
+            KeyCode::Home if !shown.is_empty() => sel = shown[0],
+            KeyCode::End if !shown.is_empty() => sel = *shown.last().unwrap(),
+            KeyCode::Char(c) if !filterable && c.is_ascii_digit() => {
+                if let Some(n) = c.to_digit(10).map(|d| d as usize).filter(|d| (1..=items.len()).contains(d)) {
+                    break Some(n - 1);
+                }
+            }
+            KeyCode::Char(c) if filterable && !k.modifiers.contains(KeyModifiers::CONTROL) => filter.push(c),
+            KeyCode::Backspace if filterable => {
+                filter.pop();
+            }
+            _ => {}
+        }
+    };
+    let _ = execute!(out, MoveUp(drawn), Clear(ClearType::FromCursorDown));
+    let _ = terminal::disable_raw_mode();
+    match result {
+        Some(i) => println!("  {} {}", bold_paint("✓", MINT), items[i]),
+        None => println!("  {}", paint("skipped", MUTED)),
+    }
+    result
+}
+
+/// The no-terminal fallback: numbers typed on a line. Enter picks `default`, s skips.
+fn menu_numbered(items: &[String], default: usize) -> Option<usize> {
     for (i, it) in items.iter().enumerate() {
-        println!("  {} {it}", bold_paint(&format!("{}{}", i + 1, if i == default { ")" } else { ")" }), ACCENT));
+        println!("  {} {it}", bold_paint(&format!("{})", i + 1), ACCENT));
     }
     loop {
         let a = ask(&paint(&format!("Pick 1-{} (Enter = {}, s = skip): ", items.len(), default + 1), MUTED))?;
@@ -39,12 +123,10 @@ fn menu(title: &str, items: &[String], default: usize) -> Option<usize> {
     }
 }
 
-/// Models worth showing first: the families people actually mean, then the rest, newest-sounding first.
-/// Example: for anthropic, "claude-sonnet-5-5" floats above "claude-3-haiku".
+/// Every model the provider listed, the families people usually mean first, then the rest newest-sounding first.
+/// Example: for anthropic, "claude-sonnet-5-5" floats above "claude-3-haiku". Nothing is hidden.
 fn rank_models(mut ids: Vec<String>) -> Vec<String> {
-    const SKIP: &[&str] = &["embed", "whisper", "tts", "dall-e", "moderation", "transcribe", "image", "audio", "realtime", "guard"];
     const LIKE: &[&str] = &["sonnet", "gpt-5", "gemini-3", "gemini-2.5-pro", "opus"];
-    ids.retain(|i| !SKIP.iter().any(|s| i.to_lowercase().contains(s)));
     ids.sort_by(|a, b| b.cmp(a));
     ids.sort_by_key(|i| !LIKE.iter().any(|l| i.to_lowercase().contains(l)));
     ids
@@ -107,6 +189,10 @@ async fn connect_provider(p: &Provider) -> Option<Vec<String>> {
                 println!("{}", paint("  that has spaces or line breaks, so it isn't a key. Try again.", AMBER));
                 continue;
             }
+            let (key, copies) = crate::ui::app::collapse_repeats(&key);
+            if copies > 1 {
+                println!("{}", paint(&format!("  that looked like the key pasted {copies} times; using one copy"), AMBER));
+            }
             if key.is_empty() && !have {
                 return None;
             }
@@ -130,10 +216,22 @@ async fn connect_provider(p: &Provider) -> Option<Vec<String>> {
                 if p.api_key_env.is_none() || attempt == 2 {
                     return None;
                 }
+                println!("{}", paint("  try again (Esc cancels)", MUTED));
             }
         }
     }
     None
+}
+
+/// Ask which model should be the default, from what the provider listed. `prefix` is what the id needs in front
+/// ("groq:" for a direct provider, nothing for the gateway). Returns Some(None) when the provider listed nothing.
+fn pick_default(ids: &[String], name: &str, prefix: &str) -> Option<Option<String>> {
+    if ids.is_empty() {
+        println!("{}", paint(&format!("  {name} listed no models. Pick one by name later: /model {prefix}<model>"), AMBER));
+        return Some(None);
+    }
+    let i = menu("Which model should be the default?", ids, 0).unwrap_or(0);
+    Some(Some(format!("{prefix}{}", ids[i])))
 }
 
 /// True when zerd can now call a model. `first_run` only changes the greeting.
@@ -177,8 +275,8 @@ async fn run_setup(cfg: &Config, first_run: bool) -> Option<bool> {
         }
         6 => {
             let p = provider_for(cfg, "gateway-model").expect("gateway provider");
-            connect_provider(&p).await?;
-            None // the gateway keeps its configured default model
+            let ids = rank_models(connect_provider(&p).await?);
+            pick_default(&ids, "gateway", "")?
         }
         n => {
             let name = match n {
@@ -204,13 +302,7 @@ async fn run_setup(cfg: &Config, first_run: bool) -> Option<bool> {
             };
             let p = providers::all_providers(cfg).remove(&name)?;
             let ids = rank_models(connect_provider(&p).await?);
-            if ids.is_empty() {
-                println!("{}", paint(&format!("  {name} listed no models. Pick one by name later: /model {name}:<model>"), AMBER));
-                return Some(true);
-            }
-            let shown: Vec<String> = ids.iter().take(9).cloned().collect();
-            let i = menu("Which model should be the default?", &shown, 0).unwrap_or(0);
-            Some(format!("{name}:{}", shown[i]))
+            pick_default(&ids, &name, &format!("{name}:"))?
         }
     };
     if let Some(m) = &model {
@@ -300,8 +392,8 @@ pub async fn doctor(cfg: &Config) -> i32 {
     }
     match crate::safety::sandbox::mode(cfg) {
         "on" => line(Level::Ok, "sandbox", "commands run inside the OS sandbox", ""),
-        "off" => line(Level::Warn, "sandbox", "turned off in config", "remove sandbox = \"off\" from config.toml"),
-        _ => line(Level::Warn, "sandbox", "not available here (macOS only), approvals and workspace confinement still apply", ""),
+        "off" => line(Level::Warn, "sandbox", "turned off in config", "/sandbox on, or remove sandbox = \"off\" from config.toml"),
+        _ => line(Level::Warn, "sandbox", &format!("not available here: {}. Approvals and workspace confinement still apply", crate::safety::sandbox::unavailable_reason()), ""),
     };
     line(Level::Ok, "approval", cfg.approval.value(), "");
     let tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
@@ -336,8 +428,8 @@ mod tests {
     }
 
     #[test]
-    fn ranking_drops_non_chat_models_and_floats_the_usual_families() {
+    fn ranking_keeps_every_model_and_floats_the_usual_families() {
         let r = rank_models(vec!["text-embedding-3".into(), "claude-3-haiku".into(), "claude-sonnet-5-5".into()]);
-        assert_eq!(r, vec!["claude-sonnet-5-5", "claude-3-haiku"]);
+        assert_eq!(r, vec!["claude-sonnet-5-5", "text-embedding-3", "claude-3-haiku"]);
     }
 }

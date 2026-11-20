@@ -263,6 +263,9 @@ pub fn instructions_for(cwd: &Path, home: Option<&Path>) -> Option<String> {
             }
         }
     }
+    if let Some(t) = crate::project_prompt::instructions(cwd) {
+        blocks.push(t);
+    }
     if let Some(t) = taste_for(&repo_dirs, &home) {
         blocks.push(t);
     }
