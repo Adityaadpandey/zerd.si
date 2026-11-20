@@ -65,7 +65,12 @@ Good: header 'Old configs', question 'What should happen to config files written
     }
     async fn execute(&self, inv: &ToolInvocation) -> ToolResult {
         let Some(asker) = crate::ui::prompt::asker() else {
-            crate::headless::block(&format!("needs an answer: {}", inv.params["questions"][0]["question"].as_str().unwrap_or("a question")));
+            // every question goes in the receipt, not just the first, so whoever reads it sees the whole decision
+            let all: Vec<&str> = inv.params["questions"].as_array().map(|q| q.iter().filter_map(|x| x["question"].as_str()).collect()).unwrap_or_default();
+            crate::headless::block(&format!("needs an answer: {}", if all.is_empty() { "a question".to_string() } else { all.join(" | ") }));
+            if crate::headless::is_on() {
+                return ToolResult::error("No user is available and this unattended run will stop here with your questions in the receipt. Write down what you found and what each answer would change, then finish.");
+            }
             return ToolResult::error("No user is available to answer. Pick the most reasonable option yourself and say which one you assumed.");
         };
         if self.config.get().model_role != "default" {
