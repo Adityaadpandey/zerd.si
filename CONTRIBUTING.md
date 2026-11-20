@@ -38,4 +38,4 @@ ones in `src/tests/` that fails without your change.
 
 ## License
 
-By contributing you agree your work is covered by the project's [LICENSE](LICENSE).
+By contributing you agree your work is released under the project's [MIT License](LICENSE).
