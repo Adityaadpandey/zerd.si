@@ -415,7 +415,9 @@ impl Default for Config {
             compact_at_tokens: 0, // 0 = fold at 70% of the model's window; set a number to fold earlier than that
             read_call_budget: 0, // 0 = no cap; a read-only request runs until the model has its answer
             write_call_budget: 100,
-            prune_at_tokens: 180_000,
+            // Every turn re-sends the whole prompt, so old file reads cost latency on each call they ride along. One real
+            // 104-turn run grew to 169k tokens with no prune at 180k; replaying it at 100k cuts the prompt tokens by ~44%.
+            prune_at_tokens: 100_000,
             cache_ttl_seconds: 300,
             idle_compact_at_tokens: 80_000, // the cache is cold after a break anyway, so that is the cheap moment to fold
             keep_recent_tokens: 40_000,
