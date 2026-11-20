@@ -716,5 +716,5 @@ touches your real sessions or keys. About 28k lines of Rust plus 8.6k lines of t
 
 ## License
 
-zerd is source-available, not open source. You can run it for any purpose, including commercial use, and redistribute
-unmodified official binaries. You cannot copy, modify, redistribute or reuse the source. See [LICENSE](LICENSE).
+zerd is open source under the [MIT License](LICENSE). Use it, fork it, change it, ship it. Contributions are welcome, see
+[CONTRIBUTING.md](CONTRIBUTING.md).
