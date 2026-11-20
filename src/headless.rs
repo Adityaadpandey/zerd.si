@@ -12,6 +12,10 @@ pub fn enable() {
     ON.store(true, Ordering::SeqCst);
 }
 
+pub fn is_on() -> bool {
+    ON.load(Ordering::SeqCst)
+}
+
 /// Called where a prompt would have appeared. A no-op outside headless runs.
 pub fn block(reason: &str) {
     if ON.load(Ordering::SeqCst) {
@@ -239,12 +243,16 @@ pub async fn main(argv: Vec<String>) -> i32 {
     let mut models: Vec<String> = events.iter().filter(|e| e["event"] == "model_call" && e["ok"] == true).filter_map(|e| e["model"].as_str().map(String::from)).collect();
     models.sort();
     models.dedup();
-    let cost = crate::util::cost::summarize_usage(&events, &pricing)["est_cost_usd"].clone();
+    let usage = crate::util::cost::summarize_usage(&events, &pricing);
+    let cost = usage["est_cost_usd"].clone();
     let extra = json!({
         "head_sha": git(&cwd, &["rev-parse", "HEAD"], None).map(|b| String::from_utf8_lossy(&b).trim().to_string()),
         "diff_sha256": diff_sha256(&cwd),
         "model": models.join(","),
         "cost_usd": cost,
+        // an unpriced model has no dollar figure, which also means --max-cost never stopped it. Say so instead of a bare null.
+        "cost_note": if cost.is_null() { json!("no price for this model in config, so the cost cap was not enforced; token counts below are real") } else { Value::Null },
+        "tokens": json!({"calls": usage["calls"], "prompt": usage["prompt_tokens"], "completion": usage["completion_tokens"], "cached": usage["cached_tokens"]}),
         "stopped_by": stop.as_ref().map(|s| format!("{s:?}")),
         "started": started,
         "finished": now(),
