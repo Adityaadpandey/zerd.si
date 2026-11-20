@@ -3,6 +3,7 @@ mod agent;
 mod client;
 mod config;
 mod context;
+mod headless;
 mod hooks;
 mod project_prompt;
 mod prompts;

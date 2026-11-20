@@ -65,6 +65,7 @@ Good: header 'Old configs', question 'What should happen to config files written
     }
     async fn execute(&self, inv: &ToolInvocation) -> ToolResult {
         let Some(asker) = crate::ui::prompt::asker() else {
+            crate::headless::block(&format!("needs an answer: {}", inv.params["questions"][0]["question"].as_str().unwrap_or("a question")));
             return ToolResult::error("No user is available to answer. Pick the most reasonable option yourself and say which one you assumed.");
         };
         if self.config.get().model_role != "default" {
