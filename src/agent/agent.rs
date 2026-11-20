@@ -1745,7 +1745,7 @@ impl Agent {
             let cm = self.session.context_manager.lock().unwrap();
             (cm.latest_usage.total_tokens as f64, cm.limit())
         };
-        if !force && used < (0.75 * limit).min(cfg.prune_at_tokens as f64) {
+        if !force && !prune_due(used, limit, cfg.prune_at_tokens) {
             return;
         }
         let (n, info) = {
@@ -1906,6 +1906,26 @@ mod tests {
 fn seeks_permission(reply: &str) -> bool {
     let tail: String = reply.trim_end().chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect::<String>().to_lowercase();
     ["say the word", "should i ", "shall i ", "want me to", "would you like me", "tell me if you'd rather", "tell me if you would rather", "let me know if you want me"].iter().any(|p| tail.contains(p))
+}
+
+/// Old tool results are cleared once the prompt reaches the smaller of 75% of the fold limit and `prune_at`.
+/// Example: limit 179k, prune_at 100k -> due from 100k; a small 60k-limit model -> due from 45k.
+pub(crate) fn prune_due(used_tokens: f64, limit: f64, prune_at: usize) -> bool {
+    used_tokens >= (0.75 * limit).min(prune_at as f64)
+}
+
+#[cfg(test)]
+mod prune_due_tests {
+    use super::prune_due;
+
+    #[test]
+    fn prune_waits_for_the_smaller_of_the_two_thresholds() {
+        assert!(!prune_due(99_000.0, 179_000.0, 100_000));
+        assert!(prune_due(100_000.0, 179_000.0, 100_000));
+        // a small window prunes by its own 75% mark, not by the larger setting
+        assert!(prune_due(45_000.0, 60_000.0, 100_000));
+        assert!(!prune_due(44_000.0, 60_000.0, 100_000));
+    }
 }
 
 fn asks_user(reply: &str) -> bool {
