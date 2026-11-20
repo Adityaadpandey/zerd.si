@@ -197,8 +197,25 @@ fn pick_key(count: usize) -> usize {
     choice
 }
 
+/// A key pasted twice (or ten times) by accident arrives as the same text repeated. Returns one copy and how many
+/// there were. Only long keys count, so a short secret like "abab" is left alone.
+/// Example: "sk-abc...xyzsk-abc...xyz" -> ("sk-abc...xyz", 2).
+pub(crate) fn collapse_repeats(s: &str) -> (String, usize) {
+    let n = s.len();
+    if n >= 32 {
+        for p in 16..=n / 2 {
+            if n % p == 0 && s.is_char_boundary(p) && s[..p].repeat(n / p) == s {
+                return (s[..p].to_string(), n / p);
+            }
+        }
+    }
+    (s.to_string(), 1)
+}
+
+/// Read a secret with a dot per character so you can see the paste landed. Enter submits, Esc or Ctrl-C cancels
+/// (returns empty). Pasted text is taken whole, and a pasted newline doesn't submit it.
 pub(crate) fn read_secret_line(prompt: &str) -> String {
-    use crossterm::event::{read, Event, KeyCode, KeyEventKind};
+    use crossterm::event::{read, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers};
     uprint!("{prompt}");
     let _ = std::io::stdout().flush();
     if crossterm::terminal::enable_raw_mode().is_err() {
@@ -206,25 +223,47 @@ pub(crate) fn read_secret_line(prompt: &str) -> String {
         let _ = std::io::stdin().read_line(&mut s);
         return s.trim().to_string();
     }
+    let _ = crossterm::execute!(std::io::stdout(), EnableBracketedPaste);
     let mut buf = String::new();
+    let mut shown = 0usize;
+    let draw = |buf: &str, shown: &mut usize| {
+        let want = buf.chars().count();
+        while *shown < want {
+            uprint!("•");
+            *shown += 1;
+        }
+        while *shown > want {
+            uprint!("\x08 \x08");
+            *shown -= 1;
+        }
+        let _ = std::io::stdout().flush();
+    };
     loop {
-        let Ok(Event::Key(k)) = read() else { continue };
-        if k.kind == KeyEventKind::Release {
-            continue;
+        match read() {
+            Ok(Event::Paste(t)) => buf.extend(t.chars().filter(|c| !c.is_control())),
+            Ok(Event::Key(k)) if k.kind != KeyEventKind::Release => match k.code {
+                KeyCode::Enter => break,
+                KeyCode::Esc => {
+                    buf.clear();
+                    break;
+                }
+                KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                    buf.clear();
+                    break;
+                }
+                KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => buf.clear(),
+                KeyCode::Backspace => {
+                    buf.pop();
+                }
+                KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => buf.push(c),
+                _ => {}
+            },
+            Ok(_) => {}
+            Err(_) => break,
         }
-        match k.code {
-            KeyCode::Enter => break,
-            KeyCode::Esc => {
-                buf.clear();
-                break;
-            }
-            KeyCode::Backspace => {
-                buf.pop();
-            }
-            KeyCode::Char(c) => buf.push(c),
-            _ => {}
-        }
+        draw(&buf, &mut shown);
     }
+    let _ = crossterm::execute!(std::io::stdout(), DisableBracketedPaste);
     let _ = crossterm::terminal::disable_raw_mode();
     uprintln!();
     buf.trim().to_string()
@@ -761,6 +800,9 @@ impl Cli {
             if !attached.is_empty() {
                 uprintln!("{}", paint(&format!("  attached: {}", attached.join(", ")), MUTED));
             }
+            if !self.confirm_task(&user_input).await {
+                continue;
+            }
             self.run_turn(&text).await;
         }
         self.autosave();
@@ -1189,6 +1231,10 @@ impl Cli {
                 uprintln!("{}", paint("That doesn't look like a key (it has spaces or line breaks). Nothing saved.", CORAL));
                 return;
             }
+            let (key, copies) = collapse_repeats(&key);
+            if copies > 1 {
+                uprintln!("{}", paint(&format!("That looked like the key pasted {copies} times; using one copy."), AMBER));
+            }
             if !key.is_empty() {
                 if let Ok(path) = save_env_key(env, &key) {
                     uprintln!("{}", paint(&format!("Saved {env} to {}", path.display()), MUTED));
@@ -1199,6 +1245,7 @@ impl Cli {
             }
         }
         match crate::client::providers::fetch_models(p).await {
+            Err(e) if e.contains("401") || e.contains("403") => uprintln!("{}", paint(&format!("{} rejected that key ({e}). It is saved, but it won't work: run /connect {} again with the right one.", p.name, p.name), CORAL)),
             Err(e) => uprintln!("{}", paint(&format!("Couldn't list {}'s models ({}). If the key is right you can still pick one by name: /model {}:<model>", p.name, e.chars().take(160).collect::<String>(), p.name), AMBER)),
             Ok(ids) => {
                 let _ = std::fs::create_dir_all(get_data_dir());
@@ -1393,6 +1440,43 @@ impl Cli {
                 } else {
                     uprintln!("{}", paint(&format!("Incorrect approval policy: {args} "), CORAL));
                     uprintln!("Valid options: on-request, on-failure, auto, auto-edit, never, yolo, plan");
+                }
+            }
+            "/sandbox" => {
+                use crate::safety::sandbox;
+                let show = |mode: &str| match mode {
+                    "on" => uprintln!("{}", paint("  sandbox: on (commands run inside the OS sandbox)", MINT)),
+                    "off" => uprintln!("{}", paint("  sandbox: off (commands run unconfined, approvals still apply)  /sandbox on to re-enable", CORAL)),
+                    _ => uprintln!("{}", paint(&format!("  sandbox: unavailable, {}", sandbox::unavailable_reason()), CORAL)),
+                };
+                match args.as_str() {
+                    "" | "status" => show(sandbox::mode(&cfg)),
+                    "on" | "off" | "remove" => {
+                        let value = if args == "on" { "auto" } else { "off" };
+                        self.config.update(|c| c.sandbox = value.into());
+                        let saved = sandbox::save_setting(value).is_ok();
+                        show(sandbox::mode(&self.config.get()));
+                        if !saved {
+                            uprintln!("{}", paint("  (could not save to config.toml, this applies to this session only)", MUTED));
+                        }
+                    }
+                    _ => uprintln!("Usage: /sandbox [status|on|off|remove]"),
+                }
+            }
+            "/prompt" => {
+                use crate::project_prompt as pp;
+                pp::ensure(&cfg.cwd);
+                match args.as_str() {
+                    "confirm on" | "confirm off" => {
+                        let on = args.ends_with("on");
+                        let saved = pp::set_confirm(&cfg.cwd, on);
+                        uprintln!("{}", paint(&if saved { format!("  task confirmation: {}", if on { "on" } else { "off" }) } else { "  could not edit prompt.yaml".to_string() }, MINT));
+                    }
+                    _ => {
+                        let on = pp::load(&cfg.cwd).map_or(true, |p| p.confirm_tasks);
+                        uprintln!("  {}  task confirmation: {}", pp::path(&cfg.cwd).display(), if on { "on" } else { "off" });
+                        uprintln!("{}", paint(&format!("  trace of answers: {}", pp::log_path(&cfg.cwd).display()), MUTED));
+                    }
                 }
             }
             "/effort" => {
@@ -1681,6 +1765,30 @@ impl Cli {
         self.agent().session.approval_manager.reload_rules();
     }
 
+    /// Before a task runs: make sure this project has a prompt.yaml, show the task back and ask if it is correct.
+    /// Every answer goes to .zerd/confirmations.jsonl. Returns false when the user said no.
+    async fn confirm_task(&self, task: &str) -> bool {
+        use crate::project_prompt as pp;
+        let cwd = self.config.get().cwd.clone();
+        if pp::ensure(&cwd) {
+            uprintln!("{}", paint("  created .zerd/prompt.yaml for this project: scope, rules and done-when commands. Edit it any time.", MUTED));
+        }
+        if !pp::load(&cwd).map_or(true, |p| p.confirm_tasks) {
+            return true;
+        }
+        let Some(asker) = super::prompt::asker() else {
+            pp::log_confirmation(&cwd, task, "skipped: no interactive prompt");
+            return true;
+        };
+        let shown: String = task.chars().take(300).collect();
+        let ok = asker.ask_choice(format!("Task: {shown}\nIs this correct, OK to go ahead?"), vec!["Yes".into(), "No".into()]).await == 0;
+        pp::log_confirmation(&cwd, task, if ok { "yes" } else { "no" });
+        if !ok {
+            uprintln!("{}", paint("  not run. Say the task again with what to change.", MUTED));
+        }
+        ok
+    }
+
     async fn confirm_yes(&self, question: &str) -> bool {
         match super::prompt::asker() {
             Some(a) => a.ask_choice(question.to_string(), vec!["Yes".into(), "No".into()]).await == 0,
@@ -1696,6 +1804,14 @@ fn _unused(_: PathBuf) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_key_pasted_several_times_collapses_to_one_copy() {
+        let k = "sk-abcdefghijklmnopqrstuvwxyz0123456789";
+        assert_eq!(collapse_repeats(&k.repeat(3)), (k.to_string(), 3));
+        assert_eq!(collapse_repeats(k), (k.to_string(), 1));
+        assert_eq!(collapse_repeats("abab"), ("abab".to_string(), 1));
+    }
+
     use super::*;
 
     #[test]
