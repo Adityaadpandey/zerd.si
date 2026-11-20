@@ -4,6 +4,9 @@ All notable changes to zerd. Newest first. Versions follow [semver](https://semv
 
 ## Unreleased
 
+## 0.1.5
+
+- zerd is open source under the MIT license. It was source-available before; you can now copy, modify and redistribute the code.
 - `/loop <task>` works with no approval prompts and no round limit. It first writes a brief to `.zerd/loop/` with the goal, the starting state and a "done when" list of commands that must pass, then repeats until each item is proven or you press Ctrl+C. Screenshots work in it: they go out once with the brief, which writes down what they show, and the history is compacted after so they are not re-billed every round. It also compacts between rounds once the context is half full.
 
 ## 0.1.4
