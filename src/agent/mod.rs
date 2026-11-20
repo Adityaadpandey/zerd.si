@@ -17,6 +17,7 @@ pub mod review;
 pub mod review_fix;
 pub mod review_fix_verify;
 pub mod review_pipeline;
+pub mod review_receipt;
 pub mod review_target;
 pub mod root;
 pub mod routing_policy;
