@@ -348,6 +348,26 @@ async fn writes_are_barriers_and_stay_ordered() {
     assert!(completed(&events)[1].1.output.contains("v1"));
 }
 
+/// Example: the model reads two files together, then fixes both in ONE reply instead of two turns. Both edits must land.
+#[tokio::test]
+async fn edits_to_different_files_in_one_reply_all_apply() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "alpha").unwrap();
+    std::fs::write(tmp.path().join("b.txt"), "beta").unwrap();
+    let both = vec![
+        ("edit", json!({"path": "a.txt", "old_string": "alpha", "new_string": "ALPHA"})),
+        ("edit", json!({"path": "b.txt", "old_string": "beta", "new_string": "BETA"})),
+    ];
+    // edit refuses a file the model has not read, so the first reply reads both at once
+    let reads = vec![("read_file", json!({"path": "a.txt"})), ("read_file", json!({"path": "b.txt"}))];
+    let mut agent = scripted(cfg(tmp.path(), json!({})), vec![calls(reads), calls(both), text("done")]).await;
+    let events = run(&mut agent, "go").await;
+    let outs: Vec<String> = completed(&events).into_iter().map(|(_, r)| r.output).collect();
+    assert_eq!(std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(), "ALPHA", "{outs:?}");
+    assert_eq!(std::fs::read_to_string(tmp.path().join("b.txt")).unwrap(), "BETA");
+    assert_eq!(outs.len(), 4, "two reads, then two edits, in two turns");
+}
+
 #[tokio::test]
 async fn no_callback_means_no_silent_approval() {
     let tmp = tempfile::tempdir().unwrap();
