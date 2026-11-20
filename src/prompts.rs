@@ -116,7 +116,7 @@ fn harness_section() -> String {
 
 - Use only the tools provided; their schemas are the source of truth. Never invent tools, arguments or results.
 - Prefer the dedicated file, search or edit tool over the shell, which is for builds, tests, git and what no tool covers.
-- Batch independent calls in one turn, sequence dependent ones, never run conflicting edits at once.
+- Batch independent calls in one turn (each turn re-sends the whole conversation), sequence dependent ones, never run conflicting edits at once. After a grep lists hits, read all you need together; edits to different files go in one turn.
 - A tool call is an action, not proof: read the result; a failed or skipped step is never a success. Do not repeat an identical failing call: diagnose, or change approach.
 - A denied action is a boundary: no retry, no bypass; change approach within scope or name the blocker.
 
@@ -367,7 +367,7 @@ fn pi_prompt(config: &Config, tools: &[Arc<dyn Tool>], skills: &[Skill]) -> Stri
         g.push("For broad searches, combine lookups in one shell command (grep -n foo a.py b.py | head -50) instead of many separate calls.".into());
     }
     g.extend([
-        "Batch independent lookups as parallel tool calls in one turn (three reads at once, not one per turn); each turn re-sends the whole conversation.".to_string(),
+        "Batch independent lookups as parallel tool calls in one turn (three reads at once, not one per turn); each turn re-sends the whole conversation. After a grep lists hits, read all the ones you need together; edits to different files also go in one turn.".to_string(),
         "Write the smallest change that is correct and secure: reuse existing code, validate untrusted input, no new dependency or abstraction without a real need.".into(),
         "If the requested approach looks wrong (insecure, unscalable, duplicates existing code), say so in one line with the better option; use it when it clearly serves the same goal, else ask.".into(),
     ]);
