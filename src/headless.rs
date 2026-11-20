@@ -12,6 +12,23 @@ pub fn enable() {
     ON.store(true, Ordering::SeqCst);
 }
 
+/// Hard stop on tool rounds for this run, from the task file. 0 means "not set".
+static ROUND_CAP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_round_cap(n: usize) {
+    ROUND_CAP.store(n, Ordering::SeqCst);
+}
+
+pub fn round_cap() -> Option<usize> {
+    match ROUND_CAP.load(Ordering::SeqCst) {
+        0 => None,
+        n => Some(n),
+    }
+}
+
+/// Used when the task file does not say. Room for a multi-file change; the wall clock and cost cap are the real brakes.
+const DEFAULT_ROUNDS: usize = 60;
+
 pub fn is_on() -> bool {
     ON.load(Ordering::SeqCst)
 }
@@ -46,6 +63,8 @@ pub struct TaskFile {
     pub issue: String,
     pub max_minutes: Option<f64>,
     pub max_cost_usd: Option<f64>,
+    /// Ceiling on tool rounds (default 60). Example: "max_rounds": 100 for a change that spans server and web.
+    pub max_rounds: Option<usize>,
     pub approval: Option<String>,
 }
 
@@ -78,11 +97,15 @@ enum Stop {
 
 /// Exit codes: 0 checks green, 1 zerd broke, 2 not verified, 3 stopped on purpose, 4 hit a cap.
 /// Example: status "verification_failed" -> 2; a run that needed an answer (blocked) -> 3 whatever else happened.
-fn exit_code(status: &str, note: &str, stop: Option<&Stop>, blocked: bool) -> i32 {
+fn exit_code(status: &str, note: &str, stop: Option<&Stop>, blocked: bool, rounds_cut: bool) -> i32 {
     if blocked {
         return 3;
     }
     if matches!(stop, Some(Stop::TimedOut | Stop::OverCost)) {
+        return 4;
+    }
+    // out of rounds with the job unfinished is a cap, not "nothing to change" (that one used to read as exit 3)
+    if rounds_cut && status != "verified" {
         return 4;
     }
     match status {
@@ -143,8 +166,8 @@ fn build_receipt(task: &TaskFile, report: Option<&Value>, exit: i32, note: &str,
     }
     checks.push(json!({"name": "production-behavior", "status": "not_verified", "reason": "seeded local data only"}));
     let status = report.and_then(|r| r["status"].as_str()).unwrap_or("stopped");
-    // complete: checks went green. stopped: it needed a person or hit a cap. incomplete: it ran out of road with work left.
-    let outcome = if status == "verified" && blocked.is_empty() { "complete" } else if !blocked.is_empty() || exit == 3 || exit == 4 { "stopped" } else { "incomplete" };
+    // complete: checks went green. stopped: it needed a person or chose to stop. incomplete: it ran out of road (rounds, time, cost) with work left.
+    let outcome = if status == "verified" && blocked.is_empty() { "complete" } else if !blocked.is_empty() || exit == 3 { "stopped" } else { "incomplete" };
     let mut r = json!({
         "task": task.id,
         "status": status,
@@ -156,6 +179,7 @@ fn build_receipt(task: &TaskFile, report: Option<&Value>, exit: i32, note: &str,
         // what the agent said it did and what is still open, in its own words
         "agent_summary": report.map(|r| r["response"].clone()).unwrap_or(Value::Null),
         "review": report.map(|r| r["review"].clone()).unwrap_or(Value::Null),
+        "rounds": report.map(|r| r["rounds"].clone()).unwrap_or(Value::Null),
         "checks": checks,
     });
     r.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
@@ -197,6 +221,7 @@ pub async fn main(argv: Vec<String>) -> i32 {
         }
     };
     enable();
+    set_round_cap(task.max_rounds.unwrap_or(DEFAULT_ROUNDS));
     let started = now();
     let mut config = match load_config(args.cwd.as_deref(), &LoadOptions { trust_project: args.trust, pi_mode: None }) {
         Ok(c) => c,
@@ -238,7 +263,8 @@ pub async fn main(argv: Vec<String>) -> i32 {
     let note = report.as_ref().and_then(|r| r["status_note"].as_str()).unwrap_or("").to_string();
     let status = report.as_ref().and_then(|r| r["status"].as_str()).unwrap_or("").to_string();
     let why = blocked();
-    let code = exit_code(&status, &note, stop.as_ref(), !why.is_empty());
+    let rounds_cut = report.as_ref().map_or(false, |r| r["rounds"]["cut"] == true);
+    let code = exit_code(&status, &note, stop.as_ref(), !why.is_empty(), rounds_cut);
     let events = tracer.snapshot();
     let mut models: Vec<String> = events.iter().filter(|e| e["event"] == "model_call" && e["ok"] == true).filter_map(|e| e["model"].as_str().map(String::from)).collect();
     models.sort();
@@ -271,18 +297,20 @@ mod tests {
 
     #[test]
     fn exit_codes_follow_the_plan() {
-        assert_eq!(exit_code("verified", "", None, false), 0);
-        assert_eq!(exit_code("verification_failed", "", None, false), 2);
-        assert_eq!(exit_code("unverified", "", None, false), 2);
-        assert_eq!(exit_code("failed", "api error", None, false), 1);
-        assert_eq!(exit_code("failed", "Time budget reached (60s)", None, false), 4);
-        assert_eq!(exit_code("verified", "", Some(&Stop::OverCost), false), 4);
-        assert_eq!(exit_code("verified", "", None, true), 3, "a question that needed a person wins over everything");
+        assert_eq!(exit_code("verified", "", None, false, false), 0);
+        assert_eq!(exit_code("verification_failed", "", None, false, false), 2);
+        assert_eq!(exit_code("unverified", "", None, false, false), 2);
+        assert_eq!(exit_code("failed", "api error", None, false, false), 1);
+        assert_eq!(exit_code("failed", "Time budget reached (60s)", None, false, false), 4);
+        assert_eq!(exit_code("verified", "", Some(&Stop::OverCost), false, false), 4);
+        assert_eq!(exit_code("verified", "", None, true, false), 3, "a question that needed a person wins over everything");
+        assert_eq!(exit_code("done_no_changes", "", None, false, true), 4, "out of rounds with nothing written is a cap, not a deliberate stop");
+        assert_eq!(exit_code("done_no_changes", "", None, false, false), 3);
     }
 
     #[test]
     fn receipt_lists_checks_and_what_was_not_verified() {
-        let task = TaskFile { id: Some("t1".into()), issue: "x".into(), max_minutes: None, max_cost_usd: None, approval: None };
+        let task = TaskFile { id: Some("t1".into()), issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None };
         let report = json!({"status": "verified", "checks": [{"command": "pnpm test", "ok": true, "exit_code": 0}]});
         let r = build_receipt(&task, Some(&report), 0, "", &[], json!({"head_sha": "abc"}));
         assert_eq!(r["checks"][0]["status"], "pass");
@@ -298,7 +326,7 @@ mod tests {
 
     #[test]
     fn a_check_that_was_red_before_the_change_is_marked_baseline_red() {
-        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, approval: None };
+        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None };
         let report = json!({"status": "unverified", "response": "added the controller; the service method is still open", "changed_files": ["a.ts"],
             "checks": [{"command": "tsc --noEmit", "ok": false, "exit_code": 2, "preexisting": true}, {"command": "eslint", "ok": true, "exit_code": 0}]});
         let r = build_receipt(&task, Some(&report), 2, "a check was already failing before the change", &[], json!({}));
