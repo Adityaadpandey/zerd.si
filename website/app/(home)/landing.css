@@ -31,11 +31,11 @@
 .film .anchor { position: absolute; left: 0; width: 1px; height: 1px; }
 .reel { position: sticky; top: 0; height: 100svh; overflow: hidden; background: #000; }
 .reel .poster, .reel canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; -webkit-user-drag: none; user-select: none; pointer-events: none; }
-.reel .poster { object-fit: contain; object-position: 50% 44%; }
+.reel .poster { object-fit: cover; }
 .film.armed .poster { display: none; }
 /* darkens the left and the foot so words stay readable over bright frames */
 .scrim { position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(90deg, rgba(0, 0, 0, 0.78) 0%, rgba(0, 0, 0, 0.45) 40%, rgba(0, 0, 0, 0) 68%), linear-gradient(0deg, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0) 38%); }
+  background: radial-gradient(ellipse 75% 60% at 50% 50%, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0) 100%); }
 
 .beat { position: absolute; left: clamp(20px, 6vw, 96px); right: clamp(20px, 6vw, 96px); opacity: var(--o, 0); translate: 0 var(--y, 0px); visibility: hidden; will-change: opacity, translate; }
 .hero-beat { top: 0; bottom: 0; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 clamp(16px, 4vw, 48px); }
@@ -48,37 +48,31 @@
 .cue i { width: 1px; height: 38px; background: linear-gradient(var(--accent-hi), transparent); animation: cue 2s ease-in-out infinite; transform-origin: top; }
 @keyframes cue { 0% { transform: scaleY(0); } 50% { transform: scaleY(1); } 100% { transform: scaleY(1); opacity: 0; } }
 
-.line { bottom: clamp(48px, 12vh, 130px); max-width: 880px; }
-.big { margin: 0; font-weight: 600; font-size: clamp(40px, 7.4vw, 112px); line-height: 0.98; letter-spacing: -0.05em; text-wrap: balance; text-shadow: 0 2px 40px rgba(0, 0, 0, 0.8); }
-.sub { margin: 20px 0 0; font-size: clamp(17px, 1.7vw, 23px); max-width: 30em; color: rgba(244, 246, 251, 0.86); text-shadow: 0 1px 20px #000; }
+/* one statement per screen: huge, centred, the second line comes into focus as you scroll */
+.stmt { inset: 0; left: 0; right: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 0 clamp(20px, 5vw, 80px);
+  filter: blur(calc((1 - var(--o, 0)) * 14px)); }
+.stmt { position: absolute; }
+.stmt::before { content: ""; position: absolute; z-index: -1; inset: 8% 0; pointer-events: none; background: radial-gradient(ellipse 52% 46% at 50% 50%, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.6) 42%, rgba(0, 0, 0, 0) 100%); }
+.stmt .t1, .stmt .t2 { margin: 0; font-weight: 600; font-size: clamp(44px, 10.5vw, 176px); line-height: 0.98; letter-spacing: -0.055em; text-wrap: balance; text-shadow: 0 0 2px rgba(0, 0, 0, 0.6), 0 4px 40px rgba(0, 0, 0, 0.9), 0 0 90px rgba(0, 0, 0, 0.8); }
+.stmt .t1 { color: #fff; }
+.stmt .t2 { color: rgba(255, 255, 255, calc(0.18 + 0.82 * var(--s, 0))); filter: blur(calc((1 - var(--s, 0)) * 16px)); }
+.step { gap: 0; }
+.step .t1 { font-size: clamp(40px, 8vw, 128px); max-width: 12em; }
+.step .t2 { margin-top: clamp(22px, 3vw, 40px); font-size: clamp(19px, 2.1vw, 30px); font-weight: 450; line-height: 1.38; letter-spacing: -0.015em; max-width: 24em; color: rgba(255, 255, 255, calc(0.25 + 0.75 * var(--s, 0))); text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 36px rgba(0, 0, 0, 0.95); }
+.step code { margin-top: 26px; padding: 10px 16px; border: 1px solid rgba(255, 255, 255, 0.18); background: rgba(0, 0, 0, 0.85); color: var(--ok); font-size: 15px; }
 
-/* the six steps: one stays lit, the film keeps moving behind it */
-.steps { top: 50%; translate: 0 calc(-50% + var(--y, 0px)); max-width: 560px; }
-.steps h2 { margin: 0 0 26px; font-size: clamp(20px, 1.9vw, 26px); font-weight: 600; letter-spacing: -0.02em; color: rgba(244, 246, 251, 0.9); }
-.steps ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
-.step { display: grid; grid-template-columns: 52px 1fr; align-items: start; opacity: 0.4; transition: opacity 0.3s; }
-.step.on { opacity: 1; }
-.step .ic { display: grid; place-items: center; width: 38px; height: 38px; margin-top: 1px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.55); color: var(--dim); transition: color 0.3s, border-color 0.3s, background 0.3s; }
-.step.on .ic { color: #fff; border-color: var(--accent); background: var(--accent); }
-.step h3 { margin: 0; font-size: clamp(22px, 2.6vw, 38px); font-weight: 600; letter-spacing: -0.035em; line-height: 1.15; }
-.step .more { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.35s ease; }
-.step.on .more { grid-template-rows: 1fr; }
-.step .more > * { overflow: hidden; min-height: 0; }
-.step .more p { margin: 8px 0 0; font-size: 17px; color: rgba(244, 246, 251, 0.82); max-width: 28em; text-shadow: 0 1px 16px #000; }
-.step .more code { display: block; margin: 10px 0 6px; width: fit-content; max-width: 100%; padding: 8px 12px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.6); color: var(--ok); font-size: 13px; }
-
-.close { top: 0; bottom: 0; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 20px; max-width: 760px; }
-.close h2 { margin: 0; font-weight: 600; font-size: clamp(32px, 4.6vw, 64px); line-height: 1; letter-spacing: -0.045em; text-wrap: balance; }
-.receipt { width: min(460px, 100%); border: 1px solid var(--line); background: rgba(0, 0, 0, 0.72); backdrop-filter: blur(8px); font: 13.5px/1 var(--m); }
+.close { top: 0; bottom: 0; left: 0; right: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; gap: 22px; padding: 0 20px; background: radial-gradient(ellipse 70% 40% at 50% 108%, rgba(47, 107, 255, 0.32), transparent 70%); filter: blur(calc((1 - var(--o, 0)) * 14px)); }
+.close h2 { margin: 0; font-weight: 600; font-size: clamp(36px, 6.4vw, 96px); line-height: 0.98; letter-spacing: -0.045em; text-wrap: balance; }
+.receipt { text-align: left; width: min(460px, 100%); border: 1px solid var(--line); background: rgba(0, 0, 0, 0.72); backdrop-filter: blur(8px); font: 13.5px/1 var(--m); }
 .receipt p { display: flex; justify-content: space-between; gap: 16px; margin: 0; padding: 11px 14px; border-bottom: 1px solid var(--line); color: var(--text); }
 .receipt p b { color: var(--ok); font-weight: 600; margin-right: 10px; }
 .receipt p span { margin-left: auto; color: var(--dim); text-align: right; }
 .receipt .sum { border: 0; color: var(--ok); }
-.models { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 15px; color: rgba(244, 246, 251, 0.82); }
+.models { list-style: none; margin: 0; padding: 0; justify-content: center; display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 15px; color: rgba(244, 246, 251, 0.82); }
 .models li { display: inline-flex; align-items: center; gap: 8px; }
 .install .models { justify-content: center; margin-top: 22px; }
 .brand-ic { flex: none; }
-.close .links { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin: 0; font-size: 15px; }
+.close .links { justify-content: center; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin: 0; font-size: 15px; }
 .close .links a:first-child, .hero-links a:first-child { text-decoration: none; font-weight: 600; color: #fff; background: var(--accent); padding: 12px 22px; border-radius: 4px; transition: background 0.15s, color 0.15s; }
 .close .links a:first-child:hover, .hero-links a:first-child:hover { background: var(--accent-hi); color: #000; }
 .close .links a:last-child { color: var(--dim); text-underline-offset: 4px; }
@@ -93,17 +87,12 @@
   .reel canvas, .scrim, .cue { display: none; }
   .beat, .hero-beat { position: relative; inset: auto; opacity: 1; visibility: visible; translate: none; padding: 0; margin-inline: clamp(20px, 6vw, 96px); }
   .hero-beat { margin-top: -60px; }
-  .steps { translate: none; }
-  .step { opacity: 1; } .step .more { grid-template-rows: 1fr; }
+  .stmt { filter: none; min-height: 70vh; }
   .close { justify-content: flex-start; }
 }
 
 @media (max-width: 760px) {
   .film { height: 700svh; }
-  .scrim { background: linear-gradient(0deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.5) 45%, rgba(0, 0, 0, 0) 75%); }
-  .steps { top: auto; bottom: clamp(40px, 9vh, 90px); translate: 0 var(--y, 0px); }
-  .step:not(.on) { display: none; }
-  .step { opacity: 1; }
   .lp .nav nav a:not(:nth-child(3)) { display: none; }
   .close { gap: 18px; }
   .hexword { aspect-ratio: 1.7 / 1; }

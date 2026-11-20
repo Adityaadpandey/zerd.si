@@ -108,7 +108,7 @@ export default async function Home() {
           <Link href="/docs/verification">Why zerd</Link>
           {rel && <span>v{rel.version}</span>}
         </p>
-        <p className="hero-fine">Built by <a href={AUTHOR.site} rel="author">Aditya Dutt Pandey</a> · <Link href="/docs/about">About zerd</Link></p>
+        <p className="hero-fine">Built by <a href={AUTHOR.site} rel="author">mew</a> · <Link href="/docs/about">About zerd</Link></p>
       </section>
       <section className="sec wrap faq" id="faq">
         <div className="sec-head">
