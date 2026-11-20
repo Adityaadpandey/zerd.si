@@ -81,14 +81,18 @@ fn find_images(text: &str, cwd: &Path) -> Vec<(usize, usize, PathBuf)> {
     let mut found: Vec<(usize, usize, PathBuf)> = vec![];
     for (start, c) in text.char_indices() {
         let before = text[..start].chars().next_back();
-        if !matches!(c, '/' | '~' | '@') || !before.map_or(true, |b| b.is_whitespace() || "'\"".contains(b)) || found.last().map_or(false, |f| start < f.1) {
+        // `C:\Users\...` is how a dropped path starts on Windows
+        let drive = c.is_ascii_alphabetic() && text[start + 1..].starts_with(":\\");
+        if !(matches!(c, '/' | '~' | '@') || drive) || !before.map_or(true, |b| b.is_whitespace() || "'\"".contains(b)) || found.last().map_or(false, |f| start < f.1) {
             continue;
         }
         let mut ends: Vec<usize> = ends.iter().copied().filter(|e| *e > start).collect();
         ends.sort();
         for end in ends {
             // `\ ` is how a terminal escapes a space in a dropped path
-            let raw: String = text[start..end].trim_start_matches('@').replace("\\ ", " ").replace('\\', "");
+            let raw = text[start..end].trim_start_matches('@').replace("\\ ", " ");
+            // other backslashes are escapes on unix, but path separators on Windows
+            let raw = if cfg!(windows) { raw } else { raw.replace('\\', "") };
             let path = match raw.strip_prefix("~/") {
                 Some(rest) => crate::util::platform::home_dir().unwrap_or_default().join(rest),
                 None => cwd.join(&raw),
