@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn out_of_scope_lines_land_in_the_receipt_and_the_files_are_counted() {
-        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None };
+        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None, review: None };
         let summary = "Done: added the endpoint.\n- OUT-OF-SCOPE: GlassModal.tsx has merge conflict markers\n**Out-of-scope:** 5 old noExplicitAny warnings in rate-limit.middleware.ts\nOUT-OF-SCOPE:\nNext: none";
         let report = json!({"status": "verified", "response": summary, "changed_files": ["a.ts", "b.ts", "c.ts"], "checks": []});
         let r = build_receipt(&task, Some(&report), 0, "", &[], json!({}));
