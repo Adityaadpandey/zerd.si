@@ -1,0 +1,11 @@
+#!/bin/sh
+# Stand-in for the real `prisma` binary inside the agent sandbox.
+# Put this directory first on PATH and any `prisma migrate dev`,
+# `prisma db push` or `npx prisma ...` lookup lands here instead.
+#
+# Why: tunyt's production database has drifted from the Prisma schema, so a
+# helpful agent running `prisma migrate` could generate a migration that
+# rewrites half the tables. Migrations here are raw SQL, written by people.
+echo "prisma is disabled in the zerd sandbox: no prisma migrate, db push or studio." >&2
+echo "Migrations are raw SQL files only. If the task needs a schema change, stop and say so." >&2
+exit 1
