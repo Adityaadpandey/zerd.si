@@ -1107,6 +1107,7 @@ impl Agent {
         self.session.hook_system.trigger_after_agent(message, final_response.as_deref().unwrap_or("")).await;
         let mut report = task.report();
         report["undo"] = json!(self.undo_info.is_some());
+        report["response"] = json!(final_response);
         let events = self.session.tracer.snapshot();
         report["usage"] = summarize_usage(&events, &self.config.get().pricing);
         let sum = |ev: &str, ok_only: bool| -> f64 { events.iter().filter(|e| e["event"] == ev && (!ok_only || e["ok"] == true)).map(|e| e["sec"].as_f64().unwrap_or(0.0)).sum() };
