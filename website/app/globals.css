@@ -1,19 +1,14 @@
-/* Shared base only: tokens, nav, footer. Landing lives in app/home.css, docs in app/docs/docs.css.
-   Idea: paper and ink, with one cobalt "verified" colour. Terminal panes stay dark in both themes. */
+/* Shared base only: tokens, nav, footer. Landing lives in app/(home)/landing.css, docs in app/docs/docs.css.
+   Idea: ink on black, with one yellow accent and a green that only ever means a check passed.
+   Terminal panes stay dark in both themes. */
 :root {
-  --paper: #f1f2ee; --paper2: #e7e9e3; --ink: #14171c; --ink2: #4a505c; --ink3: #7b8190;
-  --rule: #d4d7ce; --cobalt: #2241e0; --cobalt-soft: #dfe5ff; --red: #c8283d;
-  --term: #0e1116; --term2: #171b22; --term-ink: #d9dde5; --term-dim: #7d8594; --term-ok: #6fd6a0; --term-bad: #ff7a8a; --term-blue: #8da2ff;
+  --paper: #000; --paper2: #0b0b0b; --ink: #f5f5f5; --ink2: #bdbdbd; --ink3: #bdbdbd;
+  --rule: rgba(255, 255, 255, 0.12); --cobalt: #ffd60a; --cobalt-soft: rgba(255, 214, 10, 0.1); --red: #ff6a7a;
+  --term: #0b0e13; --term2: #11151b; --term-ink: #d9dde5; --term-dim: #7d8594; --term-ok: #6fd6a0; --term-bad: #ff7a8a; --term-blue: #8da2ff;
   --sans: var(--font-sans), system-ui, sans-serif;
   --mono: var(--font-mono), ui-monospace, Menlo, monospace;
   --max: 1200px; --nav: 64px;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #0f1217; --paper2: #161a21; --ink: #eceef2; --ink2: #a3a9b6; --ink3: #6f7686;
-    --rule: #252a34; --cobalt: #8da2ff; --cobalt-soft: #1c2440; --red: #ff7a8a;
-    --term: #080a0e; --term2: #11151b;
-  }
+  color-scheme: dark;
 }
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; scrollbar-width: none; }

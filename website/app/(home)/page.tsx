@@ -4,7 +4,9 @@ import { latestRelease } from "@/lib/latest";
 import { JsonLd } from "@/lib/jsonld";
 import CopyCmd from "./copy-cmd";
 import Demo from "./demo";
+import Receipt from "./receipt";
 import { FAQ } from "@/lib/faq";
+import { TASKS, WEBHOOK } from "@/lib/results";
 import { DESCRIPTION, HOME_TITLE, NAME, SITE } from "@/lib/site";
 import { AUTHOR } from "@/lib/author";
 
@@ -23,22 +25,13 @@ export const metadata: Metadata = {
 
 const INSTALL = "curl -fsSL https://www.zerd.si/install.sh | sh";
 
-const VERSUS: [string, string, string][] = [
-  ["Real PostgreSQL", "Yes", "No"],
-  ["Real Redis", "Yes", "No"],
-  ["Worker crash", "kill -9", "Simulated"],
-  ["Concurrent claims", "25 real races", "In-memory"],
-  ["Outages", "Exercised", "Simulated"],
-  ["Scenarios", "15 of 15 run", "15 of 15 attempted"],
-];
-
-const PIPE: [string, string, string?][] = [
+const PIPE: [string, string][] = [
   ["It edits", "zerd makes the change in your files."],
-  ["It tests", "Tests and lint run on exactly what changed.", "npx tsc --noEmit   ✓ Ran"],
+  ["It tests", "Tests and lint run on exactly what changed, never the whole build."],
   ["A second AI reviews", "A different model reads the real diff, not a summary."],
   ["A third pass objects", "A verifier tries to prove each finding wrong, so you only see the ones that hold."],
   ["It checks its own claims", "Every file and line it mentions is looked up on disk. No invented paths."],
-  ["You get the receipt", "What ran, what passed, what is still unverified.", "verified  1 files · 2 checks ok · /undo reverts"],
+  ["You get the receipt", "What ran, what passed, what is still unverified."],
 ];
 
 export default async function Home() {
@@ -64,23 +57,23 @@ export default async function Home() {
       />
 
       <section className="hero">
+        {/* The hero art is a still. It used to be a looping 7.6 MB video of the same artwork, which
+            pushed the first real content below the fold and cost megabytes on the critical path for
+            a background nobody reads twice. */}
         <div className="hero-img" aria-hidden="true">
           <picture>
             <source srcSet="/hero/hero.avif" type="image/avif" />
             <img src="/hero/hero.webp" alt="" draggable={false} width={2560} height={1441} fetchPriority="high" decoding="async" />
           </picture>
-          <video autoPlay muted loop playsInline preload="auto" poster="/hero/hero-poster.webp" width={1280} height={662}>
-            <source src="/hero/hero.webm" type="video/webm" />
-            <source src="/hero/hero.mp4" type="video/mp4" />
-          </video>
         </div>
         <div className="hero-copy">
+          <p className="eyebrow">Terminal AI coding agent</p>
           <h1>Your agent says “done.” zerd shows the proof.</h1>
-          <p className="lead">zerd is a terminal AI coding agent. It runs tests on what it changed, has a second AI read the real diff, and tells you what it couldn’t verify. You read a short receipt, not the whole change.</p>
+          <p className="lead">It runs tests on the files it changed, has a second model read the real diff, and tells you what it couldn’t verify. You read a short receipt, not the whole change.</p>
           <CopyCmd cmd={INSTALL} />
           <p className="hero-links">
             <Link href="/docs/quickstart">Try it in two minutes</Link>
-            <a href="#proof">See it beat a mock test</a>
+            <a href="#receipt">See the receipt</a>
           </p>
           <p className="hero-fine">Free to run · macOS, Linux, Windows · Claude, GPT, DeepSeek or local models</p>
           <p className="hero-fine">
@@ -90,38 +83,72 @@ export default async function Home() {
       </section>
 
       <div className="after">
+      {/* The receipt is the product. It goes above the recording, because a visitor should picture
+          what they get back before they sit through a video of a terminal. */}
+      <section className="sec wrap receipt-sec" id="receipt">
+        <div className="receipt-grid">
+          <div className="sec-head">
+            <p className="eyebrow">The receipt</p>
+            <h2>Every run ends with evidence, not a claim</h2>
+            <p>Six steps run on their own after every edit. None of them wait for you. What comes back is a receipt: what ran, what passed, and what nobody could check.</p>
+            <ol className="pipe">
+              {PIPE.map(([t, d]) => (
+                <li key={t}>
+                  <h3>{t}</h3>
+                  <p>{d}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <Receipt />
+        </div>
+      </section>
+
       <section className="lift wrap" aria-label="A real recording of zerd">
         <Demo />
-      </section>
-      <section className="sec wrap story" id="how">
-        <div className="story-side">
-          <h2>Every change comes with receipts</h2>
-          <p>Six steps run on their own after every edit. None of them wait for you.</p>
-        </div>
-        <ol className="story-steps">
-          {PIPE.map(([t, d, ev], i) => (
-            <li key={t}>
-              <span className="story-n">{i + 1}</span>
-              <h3>{t}</h3>
-              <p>{d}</p>
-              {ev && <code className="glow">{ev}</code>}
-            </li>
-          ))}
-        </ol>
       </section>
 
       <section className="sec wrap" id="proof">
         <div className="sec-head">
+          <p className="eyebrow">Measured</p>
           <h2>It finds what mock tests can’t</h2>
           <p>Same payments project, 15 attack scenarios. zerd ran them on real Postgres and Redis and found 12 real bugs. Claude Code found real bugs too, but never touched real infrastructure.</p>
         </div>
-        <div className="vs glow" role="table" aria-label="zerd and Claude Code compared">
-          <div className="vs-h" role="row"><span role="columnheader"></span><span role="columnheader">zerd, MiniMax M3</span><span role="columnheader">Claude Code, Sonnet 5.5</span></div>
-          {VERSUS.map(([k, z, c]) => (
-            <div className="vs-r" role="row" key={k}><span role="rowheader">{k}</span><span role="cell" className="yes">{z}</span><span role="cell">{c}</span></div>
+        <div className="vs" role="table" aria-label="zerd and Claude Code compared on the webhook reliability test">
+          <div className="vs-h" role="row">
+            <span role="columnheader">{WEBHOOK.scenarios}</span>
+            <span role="columnheader">zerd, MiniMax M3</span>
+            <span role="columnheader">{WEBHOOK.vs}</span>
+          </div>
+          {WEBHOOK.rows.map((r) => (
+            <div className="vs-r" role="row" key={r.label}>
+              <span role="rowheader">{r.label}</span>
+              <span role="cell" className="yes">{r.zerd}</span>
+              <span role="cell">{r.other}</span>
+            </div>
           ))}
         </div>
-        <p className="caveat">One project, one run each. This shows how deeply each tool verifies, not which model is better.</p>
+        <p className="caveat">{WEBHOOK.caveat}</p>
+
+        <div className="sec-head sub">
+          <h3>And on plain coding tasks, it matched</h3>
+          <p>{TASKS.label}</p>
+        </div>
+        <div className="vs" role="table" aria-label="zerd and Claude Code compared on 11 coding tasks">
+          <div className="vs-h" role="row">
+            <span role="columnheader">11 tasks</span>
+            <span role="columnheader">zerd, GPT-5.6 Luna</span>
+            <span role="columnheader">{TASKS.vs}</span>
+          </div>
+          {TASKS.rows.map((r) => (
+            <div className="vs-r" role="row" key={r.label}>
+              <span role="rowheader">{r.label}</span>
+              <span role="cell" className="yes">{r.zerd}</span>
+              <span role="cell">{r.other}</span>
+            </div>
+          ))}
+        </div>
+        <p className="caveat">{TASKS.caveat}</p>
       </section>
 
       <section className="sec wrap install" id="install">
