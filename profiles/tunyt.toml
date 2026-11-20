@@ -42,6 +42,8 @@ forbidden_commands = [
   'prisma\s+(studio|migrate|db)\b',
   'apps/server/scripts',
   '\b(ts-node|tsx)\b[^\n]*\bprisma\b',
+  # a worktree shares its stash with the main checkout, so a stash here can swallow someone's unfinished work
+  '\bgit\s+stash\b',
 ]
 
 # Targeted checks per app. {files} = changed files under the app. Type errors
