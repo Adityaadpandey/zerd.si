@@ -144,11 +144,11 @@ async fn registry_blocks_escape_attempts_end_to_end() {
     a.close().await;
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn os_sandbox_blocks_writes_outside_and_secret_reads_even_when_text_checks_are_bypassed() {
     if !sandbox::available() {
-        return; // needs macOS sandbox-exec
+        return; // needs sandbox-exec (macOS) or bubblewrap (Linux)
     }
     let _g = lock(); // HOME is the real one: the sandbox profile must be built from the real home
     let d = tempfile::tempdir().unwrap();
@@ -162,7 +162,9 @@ fn os_sandbox_blocks_writes_outside_and_secret_reads_even_when_text_checks_are_b
     let r = sandboxed(&format!("h=$(eval echo ~{user}); echo x > \"$h/zerd_sandbox_probe_{}.txt\"", std::process::id()), &c, &ws);
     assert!(!r.status.success() && !victim.exists());
     let _ = fs::remove_file(&victim);
-    assert!(!sandboxed(&format!("ls {}/.ssh", real_home.display()), &c, &ws).status.success());
+    // macOS denies the folder; Linux mounts an empty one over it. Either way nothing inside is visible.
+    let ls = sandboxed(&format!("ls -A {}/.ssh", real_home.display()), &c, &ws);
+    assert!(!ls.status.success() || ls.stdout.is_empty());
     assert!(sandboxed("echo t > /tmp/zerd_sandbox_probe && rm /tmp/zerd_sandbox_probe", &c, &ws).status.success());
     assert!(sandboxed("python3 -c 'print(1)' && git --version", &c, &ws).status.success());
 }
@@ -224,7 +226,7 @@ fn secret_files_are_protected_in_every_spelling_but_templates_stay_readable() {
 #[test]
 fn os_sandbox_hides_workspace_secrets_from_any_command() {
     if !sandbox::available() {
-        return; // needs macOS sandbox-exec
+        return; // needs sandbox-exec (macOS) or bubblewrap (Linux)
     }
     let e = fake_home();
     let ws = &e.ws;
@@ -280,7 +282,7 @@ fn a_commit_message_is_prose_not_a_path() {
     assert!(w.shell_violation("git commit -m 'x' && cat /etc/hosts", None).is_some());
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn git_commit_works_beside_a_tracked_secret_file_that_stays_unreadable() {
     // lint-staged and git stat every tracked file; a denied stat on apps/web/.env.test failed every commit in tunyt
@@ -302,6 +304,8 @@ fn git_commit_works_beside_a_tracked_secret_file_that_stays_unreadable() {
     fs::write(p.join("a.txt"), "b").unwrap();
     let c = cfg(p);
     assert!(sandboxed("git stash -q && git stash pop -q && git -c user.name=t -c user.email=t@t commit -qam next", &c, p).status.success());
+    // macOS hides tracked secrets too; on Linux a tracked file is left readable (masking it would corrupt git's view of it)
+    #[cfg(target_os = "macos")]
     assert!(!sandboxed("cat .env.test", &c, p).status.success());
 }
 

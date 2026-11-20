@@ -19,6 +19,8 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("/model", "show or switch model (Tab completes ids)"),
     ("/connect", "use a model API directly: /connect groq asks for the key, saves it, lists its models"),
     ("/approval", "set approval mode: on-request, auto-edit, auto, never, yolo, plan"),
+    ("/sandbox", "OS sandbox for shell commands: /sandbox on, off or remove (off persists), no argument shows status"),
+    ("/prompt", "this project's .zerd/prompt.yaml: /prompt shows it, /prompt confirm on|off switches the per-task confirmation"),
     ("/agents", "list sub-agents and running background ones; /agents stop ID stops one"),
     ("/permissions", "list or edit allow / deny / ask rules, e.g. /permissions deny Read(.env*)"),
     ("/effort", "how hard the model thinks: low, medium, high or auto (Codex models)"),

@@ -108,6 +108,14 @@ pub async fn fetch_models(p: &Provider) -> Result<Vec<String>, String> {
     if !r.status().is_success() {
         return Err(format!("HTTP {}", r.status()));
     }
+    // The Command Code gateway lists its models without looking at the key, so a 200 above proves nothing about it.
+    // An empty chat request is checked for auth before anything else (401 for a bad key, a validation error for a good one).
+    if p.name == "gateway" {
+        let probe = client.post(format!("{root}/chat/completions")).bearer_auth(p.api_key().unwrap_or_default()).json(&serde_json::json!({})).send().await.map_err(|e| e.to_string())?;
+        if matches!(probe.status().as_u16(), 401 | 403) {
+            return Err(format!("HTTP {}", probe.status()));
+        }
+    }
     let v: serde_json::Value = r.json().await.map_err(|e| e.to_string())?;
     let mut ids: Vec<String> = v["data"].as_array().map(|a| a.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect()).unwrap_or_default();
     ids.sort();
