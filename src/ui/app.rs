@@ -1137,7 +1137,7 @@ impl Cli {
         true
     }
 
-    async fn process_message(&mut self, message: &str) -> Option<String> {
+    pub(crate) async fn process_message(&mut self, message: &str) -> Option<String> {
         self.agent.as_ref()?;
         let started = Instant::now();
         let tui = self.tui.clone();
