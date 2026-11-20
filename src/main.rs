@@ -4,6 +4,7 @@ mod client;
 mod config;
 mod context;
 mod hooks;
+mod project_prompt;
 mod prompts;
 mod safety;
 mod setup;

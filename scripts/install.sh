@@ -12,13 +12,25 @@ esac
 dir="${ZERD_BIN:-$HOME/.local/bin}"
 mkdir -p "$dir"
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-base="https://github.com/Adityaadpandey/zerd.si/releases/latest/download/zerd-$t.tar.gz"
-curl -fsSL "$base" -o "$tmp/m.tar.gz"
-curl -fsSL "$base.sha256" -o "$tmp/m.sha256"
+rel="https://github.com/Adityaadpandey/zerd.si/releases/latest/download/zerd-$t"
+# Prefer the xz build (about 30% smaller, so a faster download); older releases and machines without xz use gz.
+ext=tar.gz; flag=-z
+if command -v xz >/dev/null 2>&1 && curl -fsIL --retry 2 "$rel.tar.xz" >/dev/null 2>&1; then ext=tar.xz; flag=-J; fi
+base="$rel.$ext"
+# The tiny checksum file downloads alongside the binary instead of after it, and a real progress bar shows on a terminal.
+curl -fsSL --retry 3 --retry-connrefused "$base.sha256" -o "$tmp/m.sha256" &
+sumpid=$!
+if [ -t 2 ]; then
+  echo "downloading zerd ($t)" >&2
+  curl -fL --retry 3 --retry-connrefused --progress-bar "$base" -o "$tmp/m.pkg" || { kill "$sumpid" 2>/dev/null; echo "download failed" >&2; exit 1; }
+else
+  curl -fsSL --retry 3 --retry-connrefused "$base" -o "$tmp/m.pkg" || { kill "$sumpid" 2>/dev/null; echo "download failed" >&2; exit 1; }
+fi
+wait "$sumpid" || { echo "couldn't fetch the checksum, not installing" >&2; exit 1; }
 want="$(cut -d' ' -f1 "$tmp/m.sha256")"
-got="$( (sha256sum "$tmp/m.tar.gz" 2>/dev/null || shasum -a 256 "$tmp/m.tar.gz") | cut -d' ' -f1)"
+got="$( (sha256sum "$tmp/m.pkg" 2>/dev/null || shasum -a 256 "$tmp/m.pkg") | cut -d' ' -f1)"
 [ "$want" = "$got" ] || { echo "checksum mismatch, not installing" >&2; exit 1; }
-tar -xz -C "$dir" -f "$tmp/m.tar.gz" zerd
+tar $flag -x -C "$dir" -f "$tmp/m.pkg" zerd
 echo "installed $dir/zerd"
 case ":$PATH:" in
   *":$dir:"*) ;;

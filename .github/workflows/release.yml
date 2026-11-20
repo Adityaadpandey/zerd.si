@@ -40,9 +40,12 @@ jobs:
           name=zerd-${{ matrix.target }}
           tar -czf $name.tar.gz -C target/${{ matrix.target }}/release zerd
           shasum -a 256 $name.tar.gz > $name.tar.gz.sha256
+          tar -cJf $name.tar.xz -C target/${{ matrix.target }}/release zerd
+          shasum -a 256 $name.tar.xz > $name.tar.xz.sha256
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true # the notes list the merged PRs since the last tag
           files: |
             zerd-${{ matrix.target }}.tar.gz*
+            zerd-${{ matrix.target }}.tar.xz*
             zerd-${{ matrix.target }}.zip*
