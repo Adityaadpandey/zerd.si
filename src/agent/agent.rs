@@ -461,6 +461,10 @@ impl Agent {
         if cfg.model_role != "default" {
             return 0;
         }
+        // an unattended run has nobody to top it up, so the task file sets the ceiling (the clock and cost caps still apply)
+        if let Some(n) = crate::headless::round_cap() {
+            return if budget > 0 { n.min(budget) } else { n };
+        }
         match (self.estimate, budget) {
             (0, b) => b,
             (e, 0) => ledger::backstop(e),
@@ -1108,6 +1112,8 @@ impl Agent {
         let mut report = task.report();
         report["undo"] = json!(self.undo_info.is_some());
         report["response"] = json!(final_response);
+        // lets an unattended run tell "ran out of rounds" apart from "nothing to change"
+        report["rounds"] = json!({"used": self.calls_used, "estimated": self.estimate, "cut": self.capped_last});
         let events = self.session.tracer.snapshot();
         report["usage"] = summarize_usage(&events, &self.config.get().pricing);
         let sum = |ev: &str, ok_only: bool| -> f64 { events.iter().filter(|e| e["event"] == ev && (!ok_only || e["ok"] == true)).map(|e| e["sec"].as_f64().unwrap_or(0.0)).sum() };
