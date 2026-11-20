@@ -26,6 +26,15 @@ const BLURBS: Record<string, string> = {
   Compare: "zerd next to Claude Code, Aider, Codex CLI and OpenCode, and which to pick.",
 };
 
+// The three pages a new user actually needs, in order. The docs tree has seven groups and thirty
+// pages; a wall of cards tells a visitor nothing about where to start, so the index opens with a
+// path instead of a listing.
+const PATH: { href: string; title: string; why: string }[] = [
+  { href: "/docs/quickstart", title: "Install it", why: "One binary, two minutes, no runtime to set up." },
+  { href: "/docs/how-a-run-works", title: "See one run", why: "What happens between your prompt and the receipt." },
+  { href: "/docs/verification", title: "Trust the receipt", why: "How the checks are picked and who a failure belongs to." },
+];
+
 function groups() {
   const out: { title: string; pages: { url: string; name: string; description?: string }[] }[] = [];
   for (const node of source.getPageTree().children) {
@@ -67,6 +76,22 @@ export default function DocsIndex() {
       <DocsTitle>Learn zerd</DocsTitle>
       <DocsDescription>zerd is a terminal coding agent that checks its own work. Install it in two minutes, see how a run is verified, and read where it still falls short.</DocsDescription>
       <DocsBody>
+        {/* The path first. Three steps, in order, for someone who has never run zerd. */}
+        <section className="docs-path">
+          <h2>Start here</h2>
+          <ol>
+            {PATH.map((s, i) => (
+              <li key={s.href}>
+                <span className="docs-step-n">{i + 1}</span>
+                <Link href={s.href}>
+                  <strong>{s.title}</strong>
+                  <span>{s.why}</span>
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </section>
+
         {groups().map((g, i) => (
           <section key={g.title} className="docs-group">
             <h2>{g.title}</h2>
