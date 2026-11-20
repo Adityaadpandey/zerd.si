@@ -462,8 +462,9 @@ impl Agent {
             return 0;
         }
         // an unattended run has nobody to top it up, so the task file sets the ceiling (the clock and cost caps still apply)
-        if let Some(n) = crate::headless::round_cap() {
-            return if budget > 0 { n.min(budget) } else { n };
+        // and with no ceiling in the task file there is none at all (0 = no limit), not the model-estimate backstop
+        if crate::headless::is_on() {
+            return crate::headless::round_cap().unwrap_or(0);
         }
         match (self.estimate, budget) {
             (0, b) => b,
@@ -1555,6 +1556,9 @@ impl Agent {
             self.prune(true, false);
         }
         self.wrap_up(task, &tx, &format!("Turn limit reached ({max_turns})"), "Turn limit reached").await;
+        // same as the round limit: the answer was produced, so this is a cut-off, not a token-budget failure
+        self.budget_hit = false;
+        self.capped_last = true;
     }
 
     /// What the request is, how hard, and where to look, read by the fast model next to a map of this repo.

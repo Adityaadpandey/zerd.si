@@ -26,9 +26,6 @@ pub fn round_cap() -> Option<usize> {
     }
 }
 
-/// Used when the task file does not say. Room for a multi-file change; the wall clock and cost cap are the real brakes.
-const DEFAULT_ROUNDS: usize = 60;
-
 pub fn is_on() -> bool {
     ON.load(Ordering::SeqCst)
 }
@@ -63,7 +60,7 @@ pub struct TaskFile {
     pub issue: String,
     pub max_minutes: Option<f64>,
     pub max_cost_usd: Option<f64>,
-    /// Ceiling on tool rounds (default 60). Example: "max_rounds": 100 for a change that spans server and web.
+    /// Optional ceiling on tool rounds (default: none). Example: "max_rounds": 100 for a change that spans server and web.
     pub max_rounds: Option<usize>,
     pub approval: Option<String>,
 }
@@ -221,7 +218,9 @@ pub async fn main(argv: Vec<String>) -> i32 {
         }
     };
     enable();
-    set_round_cap(task.max_rounds.unwrap_or(DEFAULT_ROUNDS));
+    // No ceiling on rounds or turns unless the task file asks for one: a long task is fine, a stuck one is caught by the clock
+    // (max_minutes, 30 by default). Example: "max_rounds": 100 only when you want a hard stop on tool rounds.
+    set_round_cap(task.max_rounds.unwrap_or(0));
     let started = now();
     let mut config = match load_config(args.cwd.as_deref(), &LoadOptions { trust_project: args.trust, pi_mode: None }) {
         Ok(c) => c,
@@ -234,6 +233,7 @@ pub async fn main(argv: Vec<String>) -> i32 {
         config.model.name = m.clone();
         config.model_pinned = true;
     }
+    config.max_turns = usize::MAX;
     config.auto_challenge = false;
     config.auto_learn = false;
     // nobody to ask, so commands run without approval; the tool-layer rules in the profile still block the dangerous ones
