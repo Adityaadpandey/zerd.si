@@ -125,6 +125,10 @@ fn build_receipt(task: &TaskFile, report: Option<&Value>, exit: i32, note: &str,
             a.iter()
                 .map(|c| {
                     let cmd = c["command"].as_str().unwrap_or("");
+                    if c["preexisting"] == true {
+                        // Example: `tsc --noEmit` already fails on the untouched checkout. Passing or failing now says nothing about this change.
+                        return json!({"name": cmd, "cmd": cmd, "exit": c["exit_code"], "status": "baseline_red", "reason": "already failing before the change, so it proves nothing about it"});
+                    }
                     json!({"name": cmd, "cmd": cmd, "exit": c["exit_code"], "status": if c["ok"] == true { "pass" } else { "fail" }})
                 })
                 .collect()
@@ -134,12 +138,20 @@ fn build_receipt(task: &TaskFile, report: Option<&Value>, exit: i32, note: &str,
         checks.push(json!({"name": "checks", "status": "not_verified", "reason": "no checks ran"}));
     }
     checks.push(json!({"name": "production-behavior", "status": "not_verified", "reason": "seeded local data only"}));
+    let status = report.and_then(|r| r["status"].as_str()).unwrap_or("stopped");
+    // complete: checks went green. stopped: it needed a person or hit a cap. incomplete: it ran out of road with work left.
+    let outcome = if status == "verified" && blocked.is_empty() { "complete" } else if !blocked.is_empty() || exit == 3 || exit == 4 { "stopped" } else { "incomplete" };
     let mut r = json!({
         "task": task.id,
-        "status": report.and_then(|r| r["status"].as_str()).unwrap_or("stopped"),
+        "status": status,
+        "outcome": outcome,
         "status_note": note,
         "exit_code": exit,
         "blocked": blocked,
+        "changed_files": report.map(|r| r["changed_files"].clone()).unwrap_or(json!([])),
+        // what the agent said it did and what is still open, in its own words
+        "agent_summary": report.map(|r| r["response"].clone()).unwrap_or(Value::Null),
+        "review": report.map(|r| r["review"].clone()).unwrap_or(Value::Null),
         "checks": checks,
     });
     r.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
@@ -272,6 +284,21 @@ mod tests {
         let empty = build_receipt(&task, None, 3, "", &["needs an answer".into()], json!({}));
         assert_eq!(empty["checks"][0]["reason"], "no checks ran");
         assert_eq!(empty["blocked"][0], "needs an answer");
+        assert_eq!(empty["outcome"], "stopped");
+        assert_eq!(r["outcome"], "complete");
+    }
+
+    #[test]
+    fn a_check_that_was_red_before_the_change_is_marked_baseline_red() {
+        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, approval: None };
+        let report = json!({"status": "unverified", "response": "added the controller; the service method is still open", "changed_files": ["a.ts"],
+            "checks": [{"command": "tsc --noEmit", "ok": false, "exit_code": 2, "preexisting": true}, {"command": "eslint", "ok": true, "exit_code": 0}]});
+        let r = build_receipt(&task, Some(&report), 2, "a check was already failing before the change", &[], json!({}));
+        assert_eq!(r["checks"][0]["status"], "baseline_red");
+        assert_eq!(r["checks"][1]["status"], "pass");
+        assert_eq!(r["outcome"], "incomplete", "unverified work must not read as finished");
+        assert_eq!(r["agent_summary"], "added the controller; the service method is still open");
+        assert_eq!(r["changed_files"][0], "a.ts");
     }
 
     #[test]
