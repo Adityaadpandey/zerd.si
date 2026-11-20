@@ -150,6 +150,9 @@ impl Tool for EditTool {
         // a changed or removed signature comes with the places that use it, straight from the graph
         let uses = if is_new { None } else { crate::util::symgraph::edit_note(&inv.cwd, &path, &old, &new) };
         let note = format!("{note}{}", uses.map_or(String::new(), |u| format!("\n{u}")));
+        // old_string was close but not byte-exact (tabs vs spaces, trailing space, quotes): say so, so it copies the file's whitespace next time
+        let loose = !is_new && crate::util::edits::applied_loosely(&old, &Self::pairs(&inv.params));
+        let note = if loose { format!("{note}\nNote: old_string was not byte-exact (whitespace, quotes or line-number prefixes differed); it matched exactly one place and was applied there, with the file's own indentation kept. Copy text exactly from read_file next time.") } else { note };
         let warns = if is_new { vec![] } else { structure_warnings(&Self::pairs(&inv.params), &old, &new) };
         let note = if warns.is_empty() { note } else { format!("{note}\nCHECK: {}\nRead the edited lines back before the next change.", warns.join("\nCHECK: ")) };
         let mut r = ToolResult::ok_with(
