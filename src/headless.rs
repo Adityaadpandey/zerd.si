@@ -63,6 +63,9 @@ pub struct TaskFile {
     /// Optional ceiling on tool rounds (default: none). Example: "max_rounds": 100 for a change that spans server and web.
     pub max_rounds: Option<usize>,
     pub approval: Option<String>,
+    /// Set false to skip the independent review of a risky diff (default: it runs). Example: "review": false
+    #[serde(default)]
+    pub review: Option<bool>,
 }
 
 #[derive(Parser, Debug)]
@@ -212,7 +215,18 @@ fn build_receipt(task: &TaskFile, report: Option<&Value>, exit: i32, note: &str,
         "checks": checks,
     });
     r.as_object_mut().unwrap().extend(extra.as_object().cloned().unwrap_or_default());
+    settle_review(&mut r);
     r
+}
+
+/// The receipt never carries a null review, and a run whose review did not run or could not be read is not complete.
+fn settle_review(r: &mut Value) {
+    if !r["review"].is_object() {
+        r["review"] = json!({"status": "not_run", "reason": "no review was recorded"});
+    }
+    if r["outcome"] == "complete" && !crate::agent::review_receipt::lets_complete(&r["review"]) {
+        r["outcome"] = json!("incomplete");
+    }
 }
 
 /// Ends the run early when it needs a person, runs out of time, or spends too much.
@@ -278,6 +292,7 @@ pub async fn main(argv: Vec<String>) -> i32 {
         return 1;
     }
     let (wall, pricing, cwd) = (Duration::from_secs_f64(config.max_seconds + 30.0), config.pricing.clone(), config.cwd.clone());
+    let review_cfg = config.clone();
     let mut cli = Cli::new(config);
     cli.new_agent(None).await;
     let Some(agent) = cli.agent.as_ref() else {
@@ -303,7 +318,16 @@ pub async fn main(argv: Vec<String>) -> i32 {
     models.dedup();
     let usage = crate::util::cost::summarize_usage(&events, &pricing);
     let cost = usage["est_cost_usd"].clone();
+    let skip = if task.review == Some(false) {
+        Some("review turned off in the task file")
+    } else if matches!(stop, Some(Stop::TimedOut | Stop::OverCost)) {
+        Some("the run hit its time or cost cap first")
+    } else {
+        None
+    };
+    let review = crate::agent::review_receipt::for_receipt(&review_cfg, &task.issue, report.as_ref(), skip).await;
     let extra = json!({
+        "review": review,
         "head_sha": git(&cwd, &["rev-parse", "HEAD"], None).map(|b| String::from_utf8_lossy(&b).trim().to_string()),
         "diff_sha256": diff_sha256(&cwd),
         "model": models.join(","),
@@ -342,9 +366,9 @@ mod tests {
 
     #[test]
     fn receipt_lists_checks_and_what_was_not_verified() {
-        let task = TaskFile { id: Some("t1".into()), issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None };
+        let task = TaskFile { id: Some("t1".into()), issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None, review: None };
         let report = json!({"status": "verified", "checks": [{"command": "pnpm test", "ok": true, "exit_code": 0}]});
-        let r = build_receipt(&task, Some(&report), 0, "", &[], json!({"head_sha": "abc"}));
+        let r = build_receipt(&task, Some(&report), 0, "", &[], json!({"head_sha": "abc", "review": {"status": "not_needed", "reason": "x"}}));
         assert_eq!(r["checks"][0]["status"], "pass");
         assert_eq!(r["checks"][0]["cmd"], "pnpm test");
         assert_eq!(r["checks"][1]["status"], "not_verified");
@@ -357,11 +381,24 @@ mod tests {
     }
 
     #[test]
+    fn a_run_whose_review_did_not_run_or_was_unparsed_is_not_complete() {
+        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None, review: None };
+        let report = json!({"status": "verified", "checks": []});
+        for review in [json!({"status": "not_run", "reason": "timed out"}), json!({"status": "unparsed", "reason": "no VERDICT"})] {
+            let r = build_receipt(&task, Some(&report), 0, "", &[], json!({"review": review}));
+            assert_eq!(r["outcome"], "incomplete");
+        }
+        let r = build_receipt(&task, Some(&report), 0, "", &[], json!({"review": {"status": "ran", "verdict": "PASS", "findings": []}}));
+        assert_eq!(r["outcome"], "complete");
+    }
+
+    #[test]
     fn a_check_that_was_red_before_the_change_is_marked_baseline_red() {
-        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None };
+        let task = TaskFile { id: None, issue: "x".into(), max_minutes: None, max_cost_usd: None, max_rounds: None, approval: None, review: None };
         let report = json!({"status": "unverified", "response": "added the controller; the service method is still open", "changed_files": ["a.ts"],
             "checks": [{"command": "tsc --noEmit", "ok": false, "exit_code": 2, "preexisting": true}, {"command": "eslint", "ok": true, "exit_code": 0}]});
         let r = build_receipt(&task, Some(&report), 2, "a check was already failing before the change", &[], json!({}));
+        assert_eq!(r["review"]["status"], "not_run", "a missing review is spelled out, never null");
         assert_eq!(r["checks"][0]["status"], "baseline_red");
         assert_eq!(r["checks"][1]["status"], "pass");
         assert_eq!(r["outcome"], "incomplete", "unverified work must not read as finished");
