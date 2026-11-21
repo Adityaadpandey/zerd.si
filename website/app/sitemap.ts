@@ -25,6 +25,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const markdown = pages.map((p) => ({ url: `${SITE}${p.url}.md`, lastModified: lastModified(`content/docs/${p.path}`) }));
   return [
     { url: SITE, lastModified: lastModified("app/(home)/page.tsx") },
+    { url: `${SITE}/how-it-works`, lastModified: lastModified("app/(home)/how-it-works/page.tsx") },
+    { url: `${SITE}/proof`, lastModified: lastModified("app/(home)/proof/page.tsx") },
     { url: `${SITE}/docs`, lastModified: newest === undefined ? undefined : new Date(newest).toISOString() },
     ...docs.map(({ url, lastModified: lm }) => ({ url, lastModified: lm })),
     ...markdown,

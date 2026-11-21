@@ -5,11 +5,10 @@ import { JsonLd } from "@/lib/jsonld";
 import CopyCmd from "./copy-cmd";
 import Demo from "./demo";
 import Scene from "./scene";
-import { BrandIcon, Check, Cross } from "./icons";
 import Models from "./models";
+import { Arrow } from "./icons";
 import { FAQ } from "@/lib/faq";
 import { DESCRIPTION, HOME_TITLE, NAME, SITE } from "@/lib/site";
-import { AUTHOR } from "@/lib/author";
 
 // The homepage states its own canonical and robots. It used to inherit them from the root layout, but a
 // global `canonical: "/"` also landed on the 404 page, telling Google the 404 was another copy of the
@@ -24,24 +23,16 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: HOME_TITLE, description: DESCRIPTION },
 };
 
+const WIN = "irm https://www.zerd.si/install.ps1 | iex";
 const INSTALL = "curl -fsSL https://www.zerd.si/install.sh | sh";
 
-const VERSUS: [string, string, string][] = [
-  ["Real PostgreSQL", "Yes", "No"],
-  ["Real Redis", "Yes", "No"],
-  ["Worker crash", "kill -9", "Simulated"],
-  ["Concurrent claims", "25 real races", "In-memory"],
-  ["Outages", "Exercised", "Simulated"],
-  ["Scenarios", "15 of 15 run", "15 of 15 attempted"],
-];
-
 const PIPE: [string, string, string?][] = [
-  ["It edits", "zerd makes the change in your files."],
-  ["It tests", "Tests and lint run on exactly what changed.", "npx tsc --noEmit   ✓ Ran"],
-  ["A second AI reviews", "A different model reads the real diff, not a summary."],
-  ["A third pass objects", "A verifier tries to prove each finding wrong, so you only see the ones that hold."],
-  ["It checks its own claims", "Every file and line it mentions is looked up on disk. No invented paths."],
-  ["You get the receipt", "What ran, what passed, what is still unverified.", "verified  1 files · 2 checks ok · /undo reverts"],
+  ["It makes the change", "You say what you want in plain words. zerd edits your files."],
+  ["It runs your tests", "Only the tests and checks for the files it just changed.", "npx tsc --noEmit   ✓ passed"],
+  ["A second AI reviews it", "A different AI reads the actual changes, like a teammate doing a code review."],
+  ["It argues with itself", "Another pass tries to prove each problem wrong, so you only see the ones that are real."],
+  ["It checks it isn’t making things up", "Every file and line number it mentions is looked up in your project. No invented files."],
+  ["You get a short report", "What ran, what passed, and what it couldn’t check. Don’t like the result? One command undoes it.", "verified · 1 file changed · 2 checks passed · /undo puts it back"],
 ];
 
 export default async function Home() {
@@ -66,53 +57,35 @@ export default async function Home() {
         }}
       />
 
-      <Scene install={INSTALL} steps={PIPE} />
+      <Scene install={INSTALL} steps={PIPE} version={rel?.version} />
 
       <div className="after">
       <section className="lift wrap" aria-label="A real recording of zerd">
         <Demo />
       </section>
 
-      <section className="sec wrap" id="proof">
-        <div className="sec-head">
-          <h2>It finds what mock tests can’t</h2>
-          <p>Same payments project, 15 attack scenarios. zerd ran them on real Postgres and Redis and found 12 real bugs. Claude Code found real bugs too, but never touched real infrastructure.</p>
-        </div>
-        <div className="vs glow" role="table" aria-label="zerd and Claude Code compared">
-          <div className="vs-h" role="row">
-            <span role="columnheader"></span>
-            <span role="columnheader" className="who z"><i className="logo-tick" aria-hidden />zerd <small>MiniMax M3</small></span>
-            <span role="columnheader" className="who"><BrandIcon name="claude" size={20} />Claude Code <small>Sonnet 5.5</small></span>
-          </div>
-          {VERSUS.map(([k, z, c]) => (
-            <div className="vs-r" role="row" key={k}>
-              <span role="rowheader">{k}</span>
-              <span role="cell" className="yes">{z === "Yes" && <Check />}{z}</span>
-              <span role="cell" className="no">{c === "No" && <Cross />}{c}</span>
-            </div>
-          ))}
-        </div>
-        <p className="caveat">One project, one run each. This shows how deeply each tool verifies, not which model is better.</p>
+      <section className="sec wrap teaser" id="proof" aria-labelledby="proof-h">
+        <h2 id="proof-h">We tested it against Claude Code.</h2>
+        <p>Same payments project, same 15 things that could go wrong. zerd ran them on a real database and found 12 real bugs.</p>
+        <Link className="teaser-link" href="/proof">See the proof <Arrow /></Link>
       </section>
 
       <section className="sec wrap install" id="install">
         <div className="sec-head">
           <h2>Try it on one small change</h2>
-          <p>One binary, no setup, two minutes. If it doesn’t save you review time, /undo puts everything back.</p>
+          <p>One file to install, about two minutes. If you don’t like what it did, type /undo and everything goes back.</p>
         </div>
-        <CopyCmd cmd={INSTALL} />
+        <CopyCmd cmd={INSTALL} winCmd={WIN} />
         <Models />
-        <p className="hero-fine">Windows: <code>irm https://www.zerd.si/install.ps1 | iex</code></p>
         <p className="hero-links">
           <Link href="/docs/quickstart">Get started</Link>
-          <Link href="/docs/verification">Why zerd</Link>
+          <Link href="/how-it-works">How it works</Link>
           {rel && <span>v{rel.version}</span>}
         </p>
-        <p className="hero-fine">Built by <a href={AUTHOR.site} rel="author">mew</a> · <Link href="/docs/about">About zerd</Link></p>
       </section>
       <section className="sec wrap faq" id="faq">
         <div className="sec-head">
-          <h2>Common questions about zerd</h2>
+          <h2>Questions</h2>
         </div>
         <div className="faq-list">
           {FAQ.map(([q, a]) => (
