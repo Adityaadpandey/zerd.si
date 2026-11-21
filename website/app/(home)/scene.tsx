@@ -5,11 +5,12 @@ import CopyCmd from "./copy-cmd";
 import HexWord from "./hex-word";
 import Models from "./models";
 
-// The opening is a film made for zerd that you scrub with the scroll wheel. public/scrub/000..095.webp are its
-// 96 frames: a field of hex digits, then a tide of them rising from the bottom until they fill the screen, then white.
+// The opening is your video, scrubbed with the scroll wheel. public/scrub/000..069.webp are its 70 frames.
 // Scroll position (p, 0 to 1) picks the frame, and every statement is its own full screen on the same timeline.
-const N = 96;
-const KEYS: [number, number][] = [[0, 0], [0.06, 2], [0.1, 10], [0.8, 82], [0.88, 95], [1, 95]];
+// Frames: 0 black hex hands, 1-15 the painting, 16-21 it dissolves to hex, 22-50 hands reach, 51-62 spark, 63-69 white.
+const N = 70;
+const KEYS: [number, number][] = [[0, 0], [0.06, 0], [0.1, 1], [0.27, 15], [0.33, 22], [0.6, 50], [0.8, 62], [0.88, 69], [1, 69]];
+const WIN = "irm https://www.zerd.si/install.ps1 | iex";
 const STEP_A = 0.42, STEP_W = 0.063;
 // Where each statement is fully in focus. The page settles on these, so a small scroll moves one whole screen.
 const SNAPS = [0, 0.19, 0.35, ...Array.from({ length: 6 }, (_, i) => STEP_A + (i + 0.5) * STEP_W), 0.97];
@@ -26,7 +27,7 @@ const frameAt = (p: number) => {
 const win = (p: number, a: number, b: number, f = 0.035) => Math.max(0, Math.min(1, Math.min((p - a) / f, (b - p) / f)));
 const ease = (x: number) => x * x * (3 - 2 * x);
 
-export default function Scene({ install, steps }: { install: string; steps: [string, string, string?][] }) {
+export default function Scene({ install, steps, version }: { install: string; steps: [string, string, string?][]; version?: string }) {
   const film = useRef<HTMLElement>(null);
   const cvs = useRef<HTMLCanvasElement>(null);
 
@@ -184,27 +185,34 @@ export default function Scene({ install, steps }: { install: string; steps: [str
       <div className="reel">
         {/* the first frame is real markup, so something is on screen before any script runs */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="poster" src="/scrub/000.webp" alt="" width={1280} height={720} fetchPriority="high" draggable={false} />
+        <img className="poster" src="/scrub/000.webp" alt="" width={1600} height={903} fetchPriority="high" draggable={false} />
         <canvas ref={cvs} aria-hidden="true" />
         <div className="scrim" aria-hidden="true" />
 
         <div className="beat hero-beat" data-a="-1" data-b="0.1">
           <h1>
-            <HexWord />
-            <span className="sr-only">zerd. Your agent says “done.” zerd shows the proof.</span>
+            <HexWord text="Zerd." />
+            <span className="sr-only">Zerd. An AI that writes code in your terminal, then checks its own work.</span>
           </h1>
-          <p className="tag">The terminal coding agent that shows the proof.</p>
-          <p className="cue" aria-hidden="true">Scroll<i /></p>
+          <p className="tag">An AI that writes code in your terminal, then checks its own work.</p>
+          <div className="hero-install">
+            <CopyCmd cmd={install} winCmd={WIN} />
+            <p className="hero-links">
+              <Link href="/docs/quickstart">Get started</Link>
+              <Link href="/how-it-works">How it works</Link>
+            </p>
+            <Models />
+          </div>
         </div>
 
         <div className="beat stmt" data-a="0.1" data-b="0.275">
-          <p className="t1">Your agent says</p>
-          <p className="t2">“done.”</p>
+          <p className="t1">AI can write code.</p>
+          <p className="t2">But is it right?</p>
         </div>
 
         <div className="beat stmt" data-a="0.285" data-b="0.41">
-          <p className="t1">zerd shows</p>
-          <p className="t2">the proof.</p>
+          <p className="t1">So we built zerd.</p>
+          <p className="t2 small">An AI coding tool that checks its own work before you ever look at it.</p>
         </div>
 
         {steps.map(([t, d, ev], i) => (
@@ -216,21 +224,22 @@ export default function Scene({ install, steps }: { install: string; steps: [str
         ))}
 
         <div className="beat close" data-a="0.93" data-b="2" id="start">
-          <h2>You read a short receipt, not the whole change.</h2>
-          <div className="receipt" role="img" aria-label="Example receipt: 1 file verified, 2 checks ok, /undo reverts">
-            <p><b>✓</b> edited<span>1 file</span></p>
-            <p><b>✓</b> tests<span>npx tsc --noEmit · ran</span></p>
-            <p><b>✓</b> review<span>second model read the diff</span></p>
-            <p><b>✓</b> claims<span>every path and line found</span></p>
-            <p className="sum">verified · 2 checks ok · /undo reverts</p>
+          <div className="close-copy">
+            <h2>Read a short report, not the whole change.</h2>
+            <p>Every run ends with what changed, what was tested, and what zerd couldn’t check. Don’t like it? <code>/undo</code> puts every file back.</p>
+            <p className="links">
+              <Link href="/docs/quickstart">Get started</Link>
+              <Link href="/how-it-works">How it works</Link>
+            </p>
           </div>
-          <CopyCmd cmd={install} />
-          <p className="links">
-            <Link href="/docs/quickstart">Try it in two minutes</Link>
-            <a href="#proof">See it beat a mock test</a>
-          </p>
-          <Models />
-          <p className="fine">Free to run on macOS, Linux and Windows.</p>
+          <figure className="close-shot">
+            <div className="close-win">
+              <div className="close-bar" aria-hidden="true"><i /><i /><i /><span>zerd · a real recording</span></div>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/shots/close.webp" alt="zerd’s real output after a fix: an explanation of the change, 3 tests passed, an unverified status line, then /verify running the check, which passes. Side panels list the files read, the file written and the commands run." width={1800} height={1227} loading="lazy" draggable={false} />
+            </div>
+            <figcaption>A real zerd run, after <code>/verify</code>. The panels on the right list what it read, wrote and ran.</figcaption>
+          </figure>
         </div>
       </div>
     </section>
