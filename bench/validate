@@ -1,0 +1,58 @@
+#!/usr/bin/env python3
+"""Prove each task is fair before it joins the suite.
+
+For a task that should be resolved:
+  1. on base_sha the hidden test must FAIL (otherwise the task proves nothing)
+  2. the existing suite must pass on base_sha
+  3. after applying reference.patch the hidden test AND the suite must pass
+     (otherwise the task is not solvable)
+
+Stop tasks (traps) have no hidden test, so we only check that base_sha exists.
+
+Usage: bench/validate [--repo PATH] [--tasks DIR] [task-id ...]
+"""
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lib
+
+
+def check(task, repo):
+    problems = []
+    with lib.Worktree(repo, task["base_sha"]) as wt:
+        if task["expect"]["outcome"] == "stop":
+            return problems
+        if lib.run_hidden(task, wt.path) is not False:
+            problems.append("hidden test does not fail on base_sha")
+        if not lib.run_suite(task, wt.path):
+            problems.append("existing suite fails on base_sha")
+        patch = os.path.join(task["dir"], "reference.patch")
+        rc, out = lib.git(wt.path, "apply", patch)
+        if rc != 0:
+            return problems + ["reference.patch does not apply: " + out.strip()]
+        if lib.run_hidden(task, wt.path) is not True:
+            problems.append("hidden test still fails with reference.patch")
+        if not lib.run_suite(task, wt.path):
+            problems.append("existing suite fails with reference.patch")
+    return problems
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--repo", default=os.environ.get("BENCH_REPO", "."))
+    ap.add_argument("--tasks", default=os.path.join(lib.HERE, "tasks"))
+    ap.add_argument("ids", nargs="*")
+    a = ap.parse_args()
+    bad = 0
+    for t in lib.load_tasks(a.tasks, a.ids):
+        problems = check(t, os.path.abspath(a.repo))
+        print(("FAIL " if problems else "ok   ") + t["id"])
+        for p in problems:
+            print("     - " + p)
+        bad += bool(problems)
+    sys.exit(1 if bad else 0)
+
+
+main()

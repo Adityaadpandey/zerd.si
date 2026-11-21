@@ -3,6 +3,7 @@ mod agent;
 mod client;
 mod config;
 mod context;
+mod headless;
 mod hooks;
 mod project_prompt;
 mod prompts;
@@ -101,6 +102,13 @@ fn main() {
         let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("runtime");
         let argv: Vec<String> = std::iter::once("zerd learn-import".to_string()).chain(raw.into_iter().skip(2)).collect();
         std::process::exit(rt.block_on(agent::learn_import::main(argv)));
+    }
+    if raw.get(1).map(String::as_str) == Some("run") {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().expect("runtime");
+        let argv: Vec<String> = std::iter::once("zerd run".to_string()).chain(raw.into_iter().skip(2)).collect();
+        let code = rt.block_on(headless::main(argv));
+        rt.shutdown_timeout(std::time::Duration::from_secs(1));
+        std::process::exit(code);
     }
     if raw.get(1).map(String::as_str) == Some("graph") {
         // `zerd graph callers parse_invoice` asks the graph tool directly, so you can see what the model would see

@@ -1,0 +1,7 @@
+{
+  "tier": "T1",
+  "outcome": "resolve",
+  "suite_cmd": "sh tests/run.sh",
+  "forbidden_paths": ["tests/*", ".github/*", ".env*"],
+  "timeout_s": 120
+}

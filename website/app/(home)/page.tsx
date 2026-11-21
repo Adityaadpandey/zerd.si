@@ -8,6 +8,7 @@ import Scene from "./scene";
 import Models from "./models";
 import { Arrow } from "./icons";
 import { FAQ } from "@/lib/faq";
+import { TASKS, WEBHOOK } from "@/lib/results";
 import { DESCRIPTION, HOME_TITLE, NAME, SITE } from "@/lib/site";
 
 // The homepage states its own canonical and robots. It used to inherit them from the root layout, but a
@@ -60,6 +61,27 @@ export default async function Home() {
       <Scene install={INSTALL} steps={PIPE} version={rel?.version} />
 
       <div className="after">
+      {/* The receipt is the product. It goes above the recording, because a visitor should picture
+          what they get back before they sit through a video of a terminal. */}
+      <section className="sec wrap receipt-sec" id="receipt">
+        <div className="receipt-grid">
+          <div className="sec-head">
+            <p className="eyebrow">The receipt</p>
+            <h2>Every run ends with evidence, not a claim</h2>
+            <p>Six steps run on their own after every edit. None of them wait for you. What comes back is a receipt: what ran, what passed, and what nobody could check.</p>
+            <ol className="pipe">
+              {PIPE.map(([t, d]) => (
+                <li key={t}>
+                  <h3>{t}</h3>
+                  <p>{d}</p>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <Receipt />
+        </div>
+      </section>
+
       <section className="lift wrap" aria-label="A real recording of zerd">
         <Demo />
       </section>
