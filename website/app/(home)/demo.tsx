@@ -63,7 +63,7 @@ export default function Demo() {
         if (!en.isIntersecting) { if (started) p.pause(); return; }
         // the first play starts from the top, not from the finished frame the poster shows
         if (started) p.play(); else { started = true; p.seek(0).then(() => p.play()); }
-      }, { threshold: 0.35 });
+      }, { threshold: 0, rootMargin: "0px 0px 35% 0px" });
       if (root.current) io.observe(root.current);
     }).catch(() => setFailed(true));
     return () => { gone = true; io?.disconnect(); player.current?.dispose(); player.current = null; };
@@ -86,7 +86,7 @@ export default function Demo() {
           {failed && <p className="stage-fail">The recording could not load. The same run is described below.</p>}
         </div>
       </AppWindow>
-      <p className="note">A real recording: zerd with MiniMax M3 fixing a bug in a small demo repo, then running its own checks with /verify. Not scripted. Long pauses are shortened.</p>
+      <p className="note">A real recording of zerd fixing a bug in a small project, then checking its own work. Nothing is scripted. Long pauses are shortened.</p>
     </div>
   );
 }

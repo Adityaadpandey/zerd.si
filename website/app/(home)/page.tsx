@@ -4,11 +4,12 @@ import { latestRelease } from "@/lib/latest";
 import { JsonLd } from "@/lib/jsonld";
 import CopyCmd from "./copy-cmd";
 import Demo from "./demo";
-import Receipt from "./receipt";
+import Scene from "./scene";
+import Models from "./models";
+import { Arrow } from "./icons";
 import { FAQ } from "@/lib/faq";
 import { TASKS, WEBHOOK } from "@/lib/results";
 import { DESCRIPTION, HOME_TITLE, NAME, SITE } from "@/lib/site";
-import { AUTHOR } from "@/lib/author";
 
 // The homepage states its own canonical and robots. It used to inherit them from the root layout, but a
 // global `canonical: "/"` also landed on the 404 page, telling Google the 404 was another copy of the
@@ -23,15 +24,16 @@ export const metadata: Metadata = {
   twitter: { card: "summary_large_image", title: HOME_TITLE, description: DESCRIPTION },
 };
 
+const WIN = "irm https://www.zerd.si/install.ps1 | iex";
 const INSTALL = "curl -fsSL https://www.zerd.si/install.sh | sh";
 
-const PIPE: [string, string][] = [
-  ["It edits", "zerd makes the change in your files."],
-  ["It tests", "Tests and lint run on exactly what changed, never the whole build."],
-  ["A second AI reviews", "A different model reads the real diff, not a summary."],
-  ["A third pass objects", "A verifier tries to prove each finding wrong, so you only see the ones that hold."],
-  ["It checks its own claims", "Every file and line it mentions is looked up on disk. No invented paths."],
-  ["You get the receipt", "What ran, what passed, what is still unverified."],
+const PIPE: [string, string, string?][] = [
+  ["It makes the change", "You say what you want in plain words. zerd edits your files."],
+  ["It runs your tests", "Only the tests and checks for the files it just changed.", "npx tsc --noEmit   ✓ passed"],
+  ["A second AI reviews it", "A different AI reads the actual changes, like a teammate doing a code review."],
+  ["It argues with itself", "Another pass tries to prove each problem wrong, so you only see the ones that are real."],
+  ["It checks it isn’t making things up", "Every file and line number it mentions is looked up in your project. No invented files."],
+  ["You get a short report", "What ran, what passed, and what it couldn’t check. Don’t like the result? One command undoes it.", "verified · 1 file changed · 2 checks passed · /undo puts it back"],
 ];
 
 export default async function Home() {
@@ -56,31 +58,7 @@ export default async function Home() {
         }}
       />
 
-      <section className="hero">
-        {/* The hero art is a still. It used to be a looping 7.6 MB video of the same artwork, which
-            pushed the first real content below the fold and cost megabytes on the critical path for
-            a background nobody reads twice. */}
-        <div className="hero-img" aria-hidden="true">
-          <picture>
-            <source srcSet="/hero/hero.avif" type="image/avif" />
-            <img src="/hero/hero.webp" alt="" draggable={false} width={2560} height={1441} fetchPriority="high" decoding="async" />
-          </picture>
-        </div>
-        <div className="hero-copy">
-          <p className="eyebrow">Terminal AI coding agent</p>
-          <h1>Your agent says “done.” zerd shows the proof.</h1>
-          <p className="lead">It runs tests on the files it changed, has a second model read the real diff, and tells you what it couldn’t verify. You read a short receipt, not the whole change.</p>
-          <CopyCmd cmd={INSTALL} />
-          <p className="hero-links">
-            <Link href="/docs/quickstart">Try it in two minutes</Link>
-            <a href="#receipt">See the receipt</a>
-          </p>
-          <p className="hero-fine">Free to run · macOS, Linux, Windows · Claude, GPT, DeepSeek or local models</p>
-          <p className="hero-fine">
-            Built by <a href={AUTHOR.site} rel="author">Aditya Dutt Pandey</a> · <Link href="/docs/about">About zerd</Link>
-          </p>
-        </div>
-      </section>
+      <Scene install={INSTALL} steps={PIPE} version={rel?.version} />
 
       <div className="after">
       {/* The receipt is the product. It goes above the recording, because a visitor should picture
@@ -108,66 +86,28 @@ export default async function Home() {
         <Demo />
       </section>
 
-      <section className="sec wrap" id="proof">
-        <div className="sec-head">
-          <p className="eyebrow">Measured</p>
-          <h2>It finds what mock tests can’t</h2>
-          <p>Same payments project, 15 attack scenarios. zerd ran them on real Postgres and Redis and found 12 real bugs. Claude Code found real bugs too, but never touched real infrastructure.</p>
-        </div>
-        <div className="vs" role="table" aria-label="zerd and Claude Code compared on the webhook reliability test">
-          <div className="vs-h" role="row">
-            <span role="columnheader">{WEBHOOK.scenarios}</span>
-            <span role="columnheader">zerd, MiniMax M3</span>
-            <span role="columnheader">{WEBHOOK.vs}</span>
-          </div>
-          {WEBHOOK.rows.map((r) => (
-            <div className="vs-r" role="row" key={r.label}>
-              <span role="rowheader">{r.label}</span>
-              <span role="cell" className="yes">{r.zerd}</span>
-              <span role="cell">{r.other}</span>
-            </div>
-          ))}
-        </div>
-        <p className="caveat">{WEBHOOK.caveat}</p>
-
-        <div className="sec-head sub">
-          <h3>And on plain coding tasks, it matched</h3>
-          <p>{TASKS.label}</p>
-        </div>
-        <div className="vs" role="table" aria-label="zerd and Claude Code compared on 11 coding tasks">
-          <div className="vs-h" role="row">
-            <span role="columnheader">11 tasks</span>
-            <span role="columnheader">zerd, GPT-5.6 Luna</span>
-            <span role="columnheader">{TASKS.vs}</span>
-          </div>
-          {TASKS.rows.map((r) => (
-            <div className="vs-r" role="row" key={r.label}>
-              <span role="rowheader">{r.label}</span>
-              <span role="cell" className="yes">{r.zerd}</span>
-              <span role="cell">{r.other}</span>
-            </div>
-          ))}
-        </div>
-        <p className="caveat">{TASKS.caveat}</p>
+      <section className="sec wrap teaser" id="proof" aria-labelledby="proof-h">
+        <h2 id="proof-h">We tested it against Claude Code.</h2>
+        <p>Same payments project, same 15 things that could go wrong. zerd ran them on a real database and found 12 real bugs.</p>
+        <Link className="teaser-link" href="/proof">See the proof <Arrow /></Link>
       </section>
 
       <section className="sec wrap install" id="install">
         <div className="sec-head">
           <h2>Try it on one small change</h2>
-          <p>One binary, no setup, two minutes. If it doesn’t save you review time, /undo puts everything back.</p>
+          <p>One file to install, about two minutes. If you don’t like what it did, type /undo and everything goes back.</p>
         </div>
-        <CopyCmd cmd={INSTALL} />
-        <p className="hero-fine">Windows: <code>irm https://www.zerd.si/install.ps1 | iex</code></p>
+        <CopyCmd cmd={INSTALL} winCmd={WIN} />
+        <Models />
         <p className="hero-links">
           <Link href="/docs/quickstart">Get started</Link>
-          <Link href="/docs/verification">Why zerd</Link>
+          <Link href="/how-it-works">How it works</Link>
           {rel && <span>v{rel.version}</span>}
         </p>
       </section>
       <section className="sec wrap faq" id="faq">
         <div className="sec-head">
-          <p className="eyebrow">Questions</p>
-          <h2>Common questions about zerd</h2>
+          <h2>Questions</h2>
         </div>
         <div className="faq-list">
           {FAQ.map(([q, a]) => (
