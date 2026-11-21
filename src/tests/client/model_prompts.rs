@@ -46,3 +46,13 @@ fn the_skill_list_shrinks_to_fit_a_small_window() {
     assert!(small.contains("skill-99") && big.contains("topic number 99") && !small.contains("topic number 99"));
     assert!(small.len() + 5000 < big.len());
 }
+
+#[test]
+fn the_prompt_tells_the_model_to_batch_with_an_example() {
+    // both prompt styles carry it: 142 tool calls over 104 turns came from one call per turn
+    for pi in [false, true] {
+        let text = prompt("claude-sonnet-5-5", 256_000, &[], pi);
+        assert!(text.contains("read all you need together") || text.contains("read all the ones you need"), "pi={pi}");
+        assert!(text.contains("edits to different files"), "pi={pi}");
+    }
+}

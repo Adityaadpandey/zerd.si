@@ -461,6 +461,11 @@ impl Agent {
         if cfg.model_role != "default" {
             return 0;
         }
+        // an unattended run has nobody to top it up, so the task file sets the ceiling (the clock and cost caps still apply)
+        // and with no ceiling in the task file there is none at all (0 = no limit), not the model-estimate backstop
+        if crate::headless::is_on() {
+            return crate::headless::round_cap().unwrap_or(0);
+        }
         match (self.estimate, budget) {
             (0, b) => b,
             (e, 0) => ledger::backstop(e),
@@ -1107,6 +1112,9 @@ impl Agent {
         self.session.hook_system.trigger_after_agent(message, final_response.as_deref().unwrap_or("")).await;
         let mut report = task.report();
         report["undo"] = json!(self.undo_info.is_some());
+        report["response"] = json!(final_response);
+        // lets an unattended run tell "ran out of rounds" apart from "nothing to change"
+        report["rounds"] = json!({"used": self.calls_used, "estimated": self.estimate, "cut": self.capped_last});
         let events = self.session.tracer.snapshot();
         report["usage"] = summarize_usage(&events, &self.config.get().pricing);
         let sum = |ev: &str, ok_only: bool| -> f64 { events.iter().filter(|e| e["event"] == ev && (!ok_only || e["ok"] == true)).map(|e| e["sec"].as_f64().unwrap_or(0.0)).sum() };
@@ -1548,6 +1556,9 @@ impl Agent {
             self.prune(true, false);
         }
         self.wrap_up(task, &tx, &format!("Turn limit reached ({max_turns})"), "Turn limit reached").await;
+        // same as the round limit: the answer was produced, so this is a cut-off, not a token-budget failure
+        self.budget_hit = false;
+        self.capped_last = true;
     }
 
     /// What the request is, how hard, and where to look, read by the fast model next to a map of this repo.
@@ -1734,7 +1745,7 @@ impl Agent {
             let cm = self.session.context_manager.lock().unwrap();
             (cm.latest_usage.total_tokens as f64, cm.limit())
         };
-        if !force && used < (0.75 * limit).min(cfg.prune_at_tokens as f64) {
+        if !force && !prune_due(used, limit, cfg.prune_at_tokens) {
             return;
         }
         let (n, info) = {
@@ -1895,6 +1906,26 @@ mod tests {
 fn seeks_permission(reply: &str) -> bool {
     let tail: String = reply.trim_end().chars().rev().take(300).collect::<Vec<_>>().into_iter().rev().collect::<String>().to_lowercase();
     ["say the word", "should i ", "shall i ", "want me to", "would you like me", "tell me if you'd rather", "tell me if you would rather", "let me know if you want me"].iter().any(|p| tail.contains(p))
+}
+
+/// Old tool results are cleared once the prompt reaches the smaller of 75% of the fold limit and `prune_at`.
+/// Example: limit 179k, prune_at 100k -> due from 100k; a small 60k-limit model -> due from 45k.
+pub(crate) fn prune_due(used_tokens: f64, limit: f64, prune_at: usize) -> bool {
+    used_tokens >= (0.75 * limit).min(prune_at as f64)
+}
+
+#[cfg(test)]
+mod prune_due_tests {
+    use super::prune_due;
+
+    #[test]
+    fn prune_waits_for_the_smaller_of_the_two_thresholds() {
+        assert!(!prune_due(99_000.0, 179_000.0, 100_000));
+        assert!(prune_due(100_000.0, 179_000.0, 100_000));
+        // a small window prunes by its own 75% mark, not by the larger setting
+        assert!(prune_due(45_000.0, 60_000.0, 100_000));
+        assert!(!prune_due(44_000.0, 60_000.0, 100_000));
+    }
 }
 
 fn asks_user(reply: &str) -> bool {

@@ -418,6 +418,7 @@ impl ApprovalManager {
     pub async fn request_confirmation(&self, confirmation: ToolConfirmation) -> Decision {
         let cb = self.confirmation_callback.lock().unwrap().clone();
         let Some(cb) = cb else {
+            crate::headless::block(&format!("needs approval: {}", confirmation.command.as_deref().unwrap_or(&confirmation.description)));
             return Decision {
                 approved: false,
                 always: false,

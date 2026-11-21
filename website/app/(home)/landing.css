@@ -173,6 +173,7 @@
 .lift { padding-bottom: clamp(8px, 2vw, 24px); }
 .lift .win { box-shadow: 0 40px 100px -40px rgba(0, 0, 0, 1); }
 
+/* ---- install ---- */
 .install { padding-bottom: clamp(120px, 14vw, 200px); text-align: center; position: relative; }
 .install .sec-head { margin-inline: auto; }
 .install .sec-head p { margin-inline: auto; }

@@ -99,8 +99,38 @@ fn reindent(new: &str, old: &str, found: &str) -> String {
     new.split('\n').map(|l| if l.trim().is_empty() { l.to_string() } else { format!("{ours}{}", l.strip_prefix(theirs.as_str()).unwrap_or(l.trim_start())) }).collect::<Vec<_>>().join("\n")
 }
 
+/// How a line is indented, in words a model can compare with its own: "8 spaces", "1 tab", "1 tab + 2 spaces", "none".
+fn indent_words(line: &str) -> String {
+    let lead = indent(line);
+    let (tabs, spaces) = (lead.matches('\t').count(), lead.matches(' ').count());
+    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+    match (tabs, spaces) {
+        (0, 0) => "none".into(),
+        (0, s) => plural(s, "space"),
+        (t, 0) => plural(t, "tab"),
+        (t, s) => format!("{} + {}", plural(t, "tab"), plural(s, "space")),
+    }
+}
+
+/// The line with the invisible parts spelled out so nobody needs cat -A. The indent is reported separately by
+/// `indent_words`. Example: "\tx\t= 1  " -> "x\t= 1" + "··": tabs inside the line show as \t, trailing spaces as dots.
+fn visible(line: &str) -> String {
+    let body = line.trim_start();
+    let kept = body.trim_end_matches([' ', '\t', '\r']);
+    let tail: String = body[kept.len()..].chars().map(|c| match c { ' ' => '·', '\t' => '⇥', _ => '⏎' }).collect();
+    format!("{}{tail}", kept.replace('\t', "\\t"))
+}
+
+/// True when some old_string is not in the file byte for byte, so a looser match had to find it. edit_file uses this to
+/// tell the model its text was close but not exact, so it copies the file's whitespace next time.
+pub fn applied_loosely(content: &str, edits: &[(String, String)]) -> bool {
+    let text = content.strip_prefix('\u{feff}').unwrap_or(content).replace("\r\n", "\n");
+    edits.iter().any(|(old, _)| !text.contains(&old.replace("\r\n", "\n")))
+}
+
 fn hint(text: &str, old: &str) -> String {
-    let first = old.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("");
+    let first_raw = old.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+    let first = first_raw.trim();
     let lines: Vec<&str> = text.split('\n').collect();
     let mut near: Vec<(usize, &str)> =
         lines.iter().enumerate().filter(|(_, l)| !first.is_empty() && l.trim().contains(first)).map(|(i, l)| (i + 1, *l)).take(3).collect();
@@ -115,8 +145,14 @@ fn hint(text: &str, old: &str) -> String {
         near = scored.into_iter().take(2).filter(|(r, _, _)| *r > 0.6).map(|(_, i, l)| (i, l)).collect();
     }
     if !near.is_empty() {
-        let rows: Vec<String> = near.iter().map(|(i, l)| format!("  {i}: {}", crate::util::text::head_chars(l.trim(), 100))).collect();
-        format!("\nClosest lines:\n{}\nRe-read the file and copy the text exactly.", rows.join("\n"))
+        // Example: "  541: [indent 1 tab] return x;··" next to "  you wrote: [indent 4 spaces] return y;"
+        let show = |l: &str| format!("[indent {}] {}", indent_words(l), crate::util::text::head_chars(&visible(l), 100));
+        let rows: Vec<String> = near.iter().map(|(i, l)| format!("  {i}: {}", show(l))).collect();
+        format!(
+            "\nClosest lines (· = trailing space, ⇥ = trailing tab, \\t = tab inside a line):\n{}\n  you wrote: {}\nRe-read the file and copy the text exactly.",
+            rows.join("\n"),
+            show(first_raw)
+        )
     } else {
         "\nRe-read the file with read_file and copy the text exactly (whitespace and indentation matter).".into()
     }
@@ -149,7 +185,8 @@ pub fn plan_edits(content: &str, edits: &[(String, String)], replace_all: bool) 
             hits = fuzzy_span(&text, &old, norm);
             if hits.is_empty() {
                 // right text, wrong depth: models lose indentation more than anything else. One place only, never a guess.
-                hits = fuzzy_span(&text, &old, |l| norm(l).trim_start().to_string());
+                // runs of spaces and tabs inside a line count as one, so "a\t=  1" finds "a = 1"
+                hits = fuzzy_span(&text, &old, |l| norm(l).split_whitespace().collect::<Vec<_>>().join(" "));
                 if hits.len() == 1 {
                     new = reindent(&new, &old, &text[hits[0].0..hits[0].1]);
                 }
@@ -237,6 +274,38 @@ mod tests {
         assert_eq!(plan_edits("\tx = 1\n", &p("    x = 1", "    x = 2"), false).unwrap().0, "\tx = 2\n");
         // the same line at two depths is ambiguous, so nothing is changed
         assert!(plan_edits("  a()\n    a()\n", &p("      a()", "b()"), false).unwrap_err().contains("2 places"));
+    }
+
+    #[test]
+    fn tabs_and_runs_of_spaces_inside_a_line_still_match() {
+        // the file has a tab and two spaces around the =, the model wrote single spaces
+        let (out, n) = plan_edits("a\t=  1\nb = 2\n", &p("a = 1", "a = 9"), false).unwrap();
+        assert_eq!((out.as_str(), n), ("a = 9\nb = 2\n", 1));
+        assert!(applied_loosely("a\t=  1\n", &p("a = 1", "x")));
+        assert!(!applied_loosely("a = 1\n", &p("a = 1", "x")));
+    }
+
+    #[test]
+    fn trailing_whitespace_and_crlf_together() {
+        let (out, _) = plan_edits("x = 1  \r\ny = 2\t\r\n", &p("x = 1\ny = 2", "x = 3\ny = 4"), false).unwrap();
+        assert_eq!(out, "x = 3\r\ny = 4\r\n");
+    }
+
+    #[test]
+    fn ambiguous_loose_match_changes_nothing_and_counts_the_places() {
+        let e = plan_edits("if a {\n\tgo()\n}\nif b {\n    go()\n}\n", &p("go()", "stop()"), false).unwrap_err();
+        assert!(e.contains("2 times"), "{e}");
+        // neither line matches byte for byte, but both match once whitespace runs are collapsed
+        let e = plan_edits("a\t=  1\na =\t1\n", &p("a = 1", "b"), false).unwrap_err();
+        assert!(e.contains("2 places"), "{e}");
+    }
+
+    #[test]
+    fn no_match_shows_the_whitespace_it_could_not_see_before() {
+        let e = plan_edits("fn a() {\n\treturn x;  \n}\n", &p("    return y;", "z"), false).unwrap_err();
+        assert!(e.contains("not found"), "{e}");
+        assert!(e.contains("[indent 1 tab] return x;··"), "closest line should show the tab indent and trailing dots: {e}");
+        assert!(e.contains("you wrote: [indent 4 spaces] return y;"), "{e}");
     }
 
     #[test]

@@ -44,8 +44,12 @@ export default function Demo() {
     let io: IntersectionObserver | undefined;
     loadLib().then((api) => {
       if (gone || !stage.current) return;
+      // The recording is 112 columns wide. Fitting it to a phone column shrinks the type to about
+      // 5px, which is a picture of a terminal rather than a readable one. Below 700px the terminal
+      // keeps its natural size and the stage scrolls sideways instead.
+      const narrow = matchMedia("(max-width: 700px)").matches;
       const p = api.create(CAST, stage.current, {
-        loop: true, idleTimeLimit: 1.4, controls: false, fit: "width", theme: "zerd",
+        loop: true, idleTimeLimit: 1.4, controls: false, fit: narrow ? "none" : "width", theme: "zerd",
         terminalFontFamily: "var(--font-mono), 'JetBrains Mono', ui-monospace, monospace", terminalLineHeight: 1.2,
         poster: "npt:0:38", preload: true,
       });
