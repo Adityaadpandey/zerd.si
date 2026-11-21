@@ -7,3 +7,26 @@ public/docs/assets/
 *.tsbuildinfo
 .source/
 content/docs.json
+
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Editor swap and backup files
+*.swp
+*.swo
+*.swn
+*~
+
+# Private keys and credentials
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
