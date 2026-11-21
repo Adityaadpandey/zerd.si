@@ -6,6 +6,7 @@ import CopyCmd from "./copy-cmd";
 import Demo from "./demo";
 import Scene from "./scene";
 import Models from "./models";
+import Receipt from "./receipt";
 import { Arrow } from "./icons";
 import { FAQ } from "@/lib/faq";
 import { TASKS, WEBHOOK } from "@/lib/results";
