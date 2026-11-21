@@ -26,5 +26,5 @@ function StaticSearchDialog(props: SharedProps) {
 }
 
 export function Provider({ children }: { children: ReactNode }) {
-  return <RootProvider theme={{ forcedTheme: "dark", defaultTheme: "dark" }} search={{ SearchDialog: StaticSearchDialog }}>{children}</RootProvider>;
+  return <RootProvider theme={{ enabled: false }} search={{ SearchDialog: StaticSearchDialog }}>{children}</RootProvider>;
 }
