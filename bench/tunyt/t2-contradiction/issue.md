@@ -1,0 +1,1 @@
+RSVP must require the guest to confirm their email with a 6-digit code before the RSVP counts. RSVP must also complete instantly with no verification step, so the guest is RSVPed the moment they enter their email.

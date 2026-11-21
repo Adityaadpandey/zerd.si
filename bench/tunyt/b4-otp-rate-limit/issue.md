@@ -1,0 +1,1 @@
+The OTP send endpoint has no rate limit, so anyone can make us send unlimited OTPs. Limit it to 5 requests per phone number or email per 15 minutes, and 20 per IP address per hour. Over the limit, return 429 with a Retry-After header. Use the Redis we already run; no new dependencies.

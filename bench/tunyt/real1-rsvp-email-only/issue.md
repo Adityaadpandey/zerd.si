@@ -1,0 +1,1 @@
+RSVP should only require an email address, with no verification step. Flow: slide > enter email > done, RSVPed. Do not return a login token or session from the RSVP endpoint. Keep the host's custom questions.

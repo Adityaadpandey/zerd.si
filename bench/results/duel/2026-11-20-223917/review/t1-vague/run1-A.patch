@@ -1,0 +1,462 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d07b4eeae..3b3b8d64f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -80,6 +80,9 @@ empty `[Unreleased]` above it.
+ 
+ ### Fixed
+ 
++- **web** Closing the Razorpay payment window no longer leaves the checkout stuck on a spinner: it now says the payment was cancelled and offers "Pay again" or "Back to review" (#TBD)
++- **web** The "Edit details" pencil on the review screen now opens the screen you can actually change, instead of bouncing you straight back to the review (#TBD)
++- **web** The progress breadcrumb now shows on the ticket-selection screen, and it only lists the stages you will actually go through (#TBD)
+ - **server** The AI event prompt on the create-event page now works for everyone: new sign-ups and people who aren't signed in at all can type a brief and get a drafted event, instead of the request being rejected (#TBD)
+ - **web** When an AI event draft can't be started, the sheet now shows the actual reason (like a rate limit or a too-short brief) rather than a generic failure (#TBD)
+ - **web** On iPhone and iPad, tapping a text field no longer zooms the whole page, because inputs on touch and small screens are now 16px (#TBD)
+diff --git a/apps/web/src/components/booking/BookingStepper.tsx b/apps/web/src/components/booking/BookingStepper.tsx
+index 8d1e6ff41..5b2881e23 100644
+--- a/apps/web/src/components/booking/BookingStepper.tsx
++++ b/apps/web/src/components/booking/BookingStepper.tsx
+@@ -2,21 +2,24 @@ import PiArrowLeftStroke from "@icons/stroke/arrows-&-chevrons/PiArrowLeftStroke
+ import PiCheckTickCircleStroke from "@icons/stroke/general/PiCheckTickCircleStroke";
+ import PiCircleDashedStroke from "@icons/stroke/general/PiCircleDashedStroke";
+ import PiCircleDotStroke from "@icons/stroke/general/PiCircleDotStroke";
++import type { BookingStageId } from "@tunyt/shared";
+ import React, { memo } from "react";
+ 
+-export type BookingStepId = "tickets" | "details" | "review";
++export type { BookingStageId };
+ 
+ interface BookingStepperProps {
+-  currentStep: BookingStepId;
++  /** The stage this screen belongs to. */
++  currentStage: BookingStageId;
++  /** The stages this flow actually goes through, in order. */
++  stages: BookingStageId[];
+   onBack?: () => void;
+ }
+ 
+-// PERF: Static — never changes, so hoist to module scope.
+-const steps: { id: BookingStepId; label: string }[] = [
+-  { id: "tickets", label: "Tickets" },
+-  { id: "details", label: "Details" },
+-  { id: "review", label: "Review & Pay" },
+-];
++const STAGE_LABELS: Record<BookingStageId, string> = {
++  tickets: "Tickets",
++  details: "Details",
++  review: "Review & Pay",
++};
+ 
+ const STATUS_COLOR = {
+   completed: "rgba(255,255,255,0.64)",
+@@ -25,10 +28,11 @@ const STATUS_COLOR = {
+ } as const;
+ 
+ export const BookingStepper = memo(function BookingStepper({
+-  currentStep,
++  currentStage,
++  stages,
+   onBack,
+ }: BookingStepperProps) {
+-  const currentIndex = steps.findIndex((s) => s.id === currentStep);
++  const currentIndex = stages.indexOf(currentStage);
+ 
+   return (
+     <div className="flex items-center gap-3 w-full py-2">
+@@ -50,7 +54,7 @@ export const BookingStepper = memo(function BookingStepper({
+       {/* Centered on the available width, matching the Figma breadcrumb
+           which sits centered on the screen independent of the back button. */}
+       <div className="flex-1 flex items-center justify-center gap-2 min-w-0">
+-        {steps.map((step, index) => {
++        {stages.map((stage, index) => {
+           const status =
+             index < currentIndex
+               ? "completed"
+@@ -60,7 +64,7 @@ export const BookingStepper = memo(function BookingStepper({
+           const color = STATUS_COLOR[status];
+ 
+           return (
+-            <React.Fragment key={step.id}>
++            <React.Fragment key={stage}>
+               {index > 0 && (
+                 <span
+                   className="text-p4 text-white/24 leading-none"
+@@ -95,7 +99,7 @@ export const BookingStepper = memo(function BookingStepper({
+                   className="text-h6 font-medium tracking-[-0.02em] leading-[1.1]"
+                   style={{ color }}
+                 >
+-                  {step.label}
++                  {STAGE_LABELS[stage]}
+                 </span>
+               </div>
+             </React.Fragment>
+diff --git a/apps/web/src/components/booking/steps/AttendeesStep.tsx b/apps/web/src/components/booking/steps/AttendeesStep.tsx
+index 6a1f4b56b..1475583d7 100644
+--- a/apps/web/src/components/booking/steps/AttendeesStep.tsx
++++ b/apps/web/src/components/booking/steps/AttendeesStep.tsx
+@@ -365,7 +365,7 @@ export default function AttendeesStep({
+         undefined)
+       : undefined;
+ 
+-  const { needsAttendees } = useBookingFlowConfig(eventId);
++  const { needsAttendees, stages } = useBookingFlowConfig(eventId);
+   const autoStartedRef = useRef(false);
+   const isCreatingBookingRef = useRef(false);
+ 
+@@ -1002,7 +1002,7 @@ export default function AttendeesStep({
+   return (
+     <div className="flex flex-col gap-5">
+       {/* Step breadcrumb */}
+-      <BookingStepper currentStep="details" />
++      <BookingStepper currentStage="details" stages={stages} />
+ 
+       {/* Sold-out error banner */}
+       {soldOutError && (
+diff --git a/apps/web/src/components/booking/steps/IdentifyStep.tsx b/apps/web/src/components/booking/steps/IdentifyStep.tsx
+index e411ec157..15205d8f9 100644
+--- a/apps/web/src/components/booking/steps/IdentifyStep.tsx
++++ b/apps/web/src/components/booking/steps/IdentifyStep.tsx
+@@ -3,6 +3,7 @@
+ import Script from "next/script";
+ import { useCallback, useEffect, useRef, useState } from "react";
+ import { activityTracker } from "@/lib/analytics/activity-tracker";
++import { useBookingFlowConfig } from "@/lib/booking/use-flow-config";
+ import { csrfHeaders, ensureCsrfToken, setCsrfCookie } from "@/lib/csrf";
+ import { useCompleteProfileMutation } from "@/lib/redux/api/userApi";
+ import { useAppDispatch, useAppSelector } from "@/lib/redux/hooks";
+@@ -160,6 +161,10 @@ export default function IdentifyStep() {
+ 
+   const [completeProfile] = useCompleteProfileMutation();
+ 
++  // The breadcrumb stages for this flow. The login screen comes before the
++  // ticket screen, so the current stage is still "tickets".
++  const { stages } = useBookingFlowConfig("");
++
+   // ── Advance to next step ───────────────────────────────────────────────────
+ 
+   const advance = useCallback(() => {
+@@ -494,7 +499,7 @@ export default function IdentifyStep() {
+       />
+       <div className="flex flex-col gap-7">
+         {/* ── Progress stepper ── */}
+-        <BookingStepper currentStep="details" />
++        <BookingStepper currentStage="tickets" stages={stages} />
+ 
+         {/* ══════════════════════════════════════════════════════════════════════ */}
+         {/* STATE: IDLE — Details form */}
+diff --git a/apps/web/src/components/booking/steps/PaymentStep.tsx b/apps/web/src/components/booking/steps/PaymentStep.tsx
+index 8321f35a9..1cff7c3f3 100644
+--- a/apps/web/src/components/booking/steps/PaymentStep.tsx
++++ b/apps/web/src/components/booking/steps/PaymentStep.tsx
+@@ -79,6 +79,10 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+   const [errorMsg, setErrorMsg] = useState<string>("");
+   // true after the first auto-start attempt so "idle" shows a retry button
+   const [hasTried, setHasTried] = useState(false);
++  // True when the user closed the Razorpay popup themselves. Nothing is
++  // loading at that point, so the UI must not show a spinner — it waits for
++  // the user to pick "Pay again" or "Back to review".
++  const [dismissed, setDismissed] = useState(false);
+ 
+   // Guard against double-invocation (React Strict Mode)
+   const didAutoStartRef = useRef(false);
+@@ -253,6 +257,9 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+         onDismiss: () => {
+           razorpayOpenRef.current = false;
+           isProcessingRef.current = false;
++          // The user closed the popup on purpose. Nothing is loading now, so
++          // switch off the spinner and offer a way back in.
++          setDismissed(true);
+           setStatus("idle");
+           dispatch(
+             addToast({ message: "Payment was cancelled", variant: "info" }),
+@@ -283,6 +290,10 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+   ]);
+ 
+   // ── Auto-start flow ────────────────────────────────────────────────────────
++  //
++  // Razorpay opens once, on the first attempt. `didAutoStartRef` is never
++  // cleared by a dismiss, so closing the popup does not re-open it behind
++  // the user's back — they get the "Pay again" button instead.
+ 
+   useEffect(() => {
+     if (!booking || !bookingId) return;
+@@ -307,6 +318,7 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+     isProcessingRef.current = false;
+     razorpayOpenRef.current = false;
+     didAutoStartRef.current = false;
++    setDismissed(false);
+     setErrorMsg("");
+     setStatus("idle");
+     startPayment();
+@@ -433,6 +445,30 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+ 
+   const isFreeBooking = (booking?.total ?? 1) === 0;
+ 
++  // The user closed the Razorpay popup. Nothing is loading here, so a
++  // spinner would be a lie — show them a clear way back in instead.
++  if (dismissed) {
++    return (
++      <div className="flex flex-col items-center gap-4 py-12">
++        <p className="text-p2 text-white/80 text-center">
++          Payment was cancelled. Your tickets are still held.
++        </p>
++        <div className="flex flex-col gap-3 w-full mt-2">
++          <Button variant="primary" fullWidth onClick={handleRetry}>
++            Pay again
++          </Button>
++          <Button
++            variant="secondary"
++            fullWidth
++            onClick={() => dispatch(bookingActions.setStep(4))}
++          >
++            Back to review
++          </Button>
++        </div>
++      </div>
++    );
++  }
++
+   return (
+     <div className="flex flex-col items-center gap-4 py-12">
+       <Spinner />
+diff --git a/apps/web/src/components/booking/steps/ReviewStep.tsx b/apps/web/src/components/booking/steps/ReviewStep.tsx
+index b5b9d531c..4c7646bbb 100644
+--- a/apps/web/src/components/booking/steps/ReviewStep.tsx
++++ b/apps/web/src/components/booking/steps/ReviewStep.tsx
+@@ -129,9 +129,17 @@ export default function ReviewStep() {
+   // hardcoded setStep(3) here would send the user into a step that instantly
+   // forwards them right back, making Back look broken. Route to whatever
+   // step is actually visible immediately before Review instead.
+-  const { visibleSteps } = useBookingFlowConfig(resolvedEventId);
++  const { visibleSteps, needsAttendees, stages } =
++    useBookingFlowConfig(resolvedEventId);
+   const reviewIndex = visibleSteps.indexOf(4);
+   const backStep = reviewIndex > 0 ? visibleSteps[reviewIndex - 1] : 3;
++  // The "Edit details" pencil only means something when the attendees step
++  // is actually part of this flow. `needsAttendees` is undefined while the
++  // custom-field query is still loading and false when the event needs no
++  // attendee-level fields — in that case AttendeesStep (3) instantly
++  // bounces straight back to Review, so sending the user there and back
++  // again reads as a broken button. Fall back to the ticket step.
++  const canEditDetails = needsAttendees === true;
+ 
+   const [applyDiscount, { isLoading: isApplying }] =
+     useApplyBookingDiscountMutation();
+@@ -471,7 +479,8 @@ export default function ReviewStep() {
+     <div className="flex flex-col gap-4">
+       {/* Step breadcrumb */}
+       <BookingStepper
+-        currentStep="review"
++        currentStage="review"
++        stages={stages}
+         onBack={() => dispatch(bookingActions.setStep(backStep))}
+       />
+ 
+@@ -692,8 +701,10 @@ export default function ReviewStep() {
+ 
+         <button
+           type="button"
+-          onClick={() => dispatch(bookingActions.setStep(3))}
+-          aria-label="Edit details"
++          onClick={() =>
++            dispatch(bookingActions.setStep(canEditDetails ? 3 : 2))
++          }
++          aria-label={canEditDetails ? "Edit details" : "Edit tickets"}
+           className="
+             size-8 rounded-lg shrink-0
+             bg-white/[0.12] border border-white/[0.12]
+diff --git a/apps/web/src/components/booking/steps/SelectStep.tsx b/apps/web/src/components/booking/steps/SelectStep.tsx
+index 63390b401..a67c07d97 100644
+--- a/apps/web/src/components/booking/steps/SelectStep.tsx
++++ b/apps/web/src/components/booking/steps/SelectStep.tsx
+@@ -2,11 +2,13 @@
+ 
+ import PiChevronBigDownStroke from "@icons/stroke/arrows-&-chevrons/PiChevronBigDownStroke";
+ import PiPlusDefaultStroke from "@icons/stroke/maths/PiPlusDefaultStroke";
++import type { BookingStageId } from "@tunyt/shared";
+ import { effectiveTicketPrice, hasTicketDiscount } from "@tunyt/shared";
+ import { useEffect, useState } from "react";
+ import { SeatPickerOverlay } from "@/components/booking/SeatPickerOverlay";
+ import { useReducedMotion } from "@/hooks/useReducedMotion";
+ import { activityTracker } from "@/lib/analytics/activity-tracker";
++import { useBookingFlowConfig } from "@/lib/booking/use-flow-config";
+ import { formatEventTime } from "@/lib/event-time";
+ import { addToast } from "@/lib/redux";
+ import { useGetPublicEventByIdQuery } from "@/lib/redux/api/eventsApi";
+@@ -14,6 +16,7 @@ import { useGetTicketTypesQuery } from "@/lib/redux/api/ticketsApi";
+ import { useAppDispatch, useAppSelector } from "@/lib/redux/hooks";
+ import { bookingActions } from "@/lib/redux/slices/bookingSlice";
+ import { openTeamJoinDialog } from "@/lib/redux/slices/uiSlice";
++import { BookingStepper } from "../BookingStepper";
+ 
+ // ─── Helpers ──────────────────────────────────────────────────────────────────
+ 
+@@ -257,9 +260,10 @@ function ListRowInKeyframes() {
+   );
+ }
+ 
+-function SelectSkeleton() {
++function SelectSkeleton({ stages }: { stages: BookingStageId[] }) {
+   return (
+     <div className="flex flex-col gap-2 animate-pulse" aria-busy="true">
++      <BookingStepper currentStage="tickets" stages={stages} />
+       <div className="h-3 w-20 rounded-full bg-white/[0.08] mx-auto my-2" />
+       {[1, 2, 3].map((i) => (
+         <div
+@@ -305,6 +309,10 @@ export default function SelectStep({ eventId }: SelectStepProps) {
+   const { data, isLoading, isError, refetch } = useGetTicketTypesQuery(eventId);
+   const ticketTypes = data?.data ?? [];
+ 
++  // The breadcrumb stages for this flow, so it never advertises a "Details"
++  // stage the buyer won't see.
++  const { stages } = useBookingFlowConfig(eventId);
++
+   const teamTicketTypes = ticketTypes.filter(
+     (tt) => tt.minTeamSize != null && tt.minTeamSize >= 1,
+   );
+@@ -391,7 +399,7 @@ export default function SelectStep({ eventId }: SelectStepProps) {
+ 
+   // ── Render ─────────────────────────────────────────────────────────────────
+ 
+-  if (isLoading) return <SelectSkeleton />;
++  if (isLoading) return <SelectSkeleton stages={stages} />;
+ 
+   if (isError) {
+     return (
+@@ -463,6 +471,7 @@ export default function SelectStep({ eventId }: SelectStepProps) {
+   if (ticketTypes.length === 0) {
+     return (
+       <div className="flex flex-col flex-1 gap-3 pt-5">
++        <BookingStepper currentStage="tickets" stages={stages} />
+         <SectionDivider label="RSVP" />
+ 
+         <div className="flex items-center justify-between h-14 rounded-2xl px-3 bg-white/[0.08]">
+@@ -519,6 +528,9 @@ export default function SelectStep({ eventId }: SelectStepProps) {
+ 
+   return (
+     <div className="flex flex-col flex-1 pt-5">
++      {/* Step breadcrumb */}
++      <BookingStepper currentStage="tickets" stages={stages} />
++
+       {/* ── Team ticket types — single-select radio style ─────────────────── */}
+       {hasTeamTickets && (
+         <>
+diff --git a/apps/web/src/lib/booking/use-flow-config.ts b/apps/web/src/lib/booking/use-flow-config.ts
+index 06c43f642..03acf73b7 100644
+--- a/apps/web/src/lib/booking/use-flow-config.ts
++++ b/apps/web/src/lib/booking/use-flow-config.ts
+@@ -1,6 +1,10 @@
+ "use client";
+ 
+-import { getVisibleBookingSteps, shouldCollectAttendees } from "@tunyt/shared";
++import {
++  getBookingStages,
++  getVisibleBookingSteps,
++  shouldCollectAttendees,
++} from "@tunyt/shared";
+ import {
+   useGetEventCustomFieldsQuery,
+   useGetTicketTypesQuery,
+@@ -71,5 +75,10 @@ export function useBookingFlowConfig(eventId: string) {
+     needsAttendees,
+   });
+ 
+-  return { isAuthenticated, needsAttendees, visibleSteps };
++  // The breadcrumb stages for this flow. Derived from the real steps so the
++  // breadcrumb never advertises a "Details" stage the buyer won't see
++  // (an event with no attendee fields skips it).
++  const stages = getBookingStages(visibleSteps);
++
++  return { isAuthenticated, needsAttendees, visibleSteps, stages };
+ }
+diff --git a/packages/tunyt-shared/src/booking.ts b/packages/tunyt-shared/src/booking.ts
+index c7a27d3ae..a043f3ebe 100644
+--- a/packages/tunyt-shared/src/booking.ts
++++ b/packages/tunyt-shared/src/booking.ts
+@@ -241,6 +241,33 @@ export function getVisibleBookingSteps(input: {
+ 	];
+ }
+ 
++/** The three stages a buyer sees in the checkout breadcrumb.
++ *
++ * `review` covers both the review screen (step 4) and the payment screen
++ * (step 5) — they are one stage to the buyer, "review and pay" — so the
++ * breadcrumb must not list them as two separate steps. */
++export type BookingStageId = "tickets" | "details" | "review";
++
++/** Turns the visible step list into the breadcrumb stages for it.
++ *
++ * The breadcrumb has to follow the real flow: an event with no attendee
++ * fields has no "details" stage, and a flow that starts at the ticket
++ * screen has no "identify" stage either. Deriving the stages from
++ * `visibleSteps` keeps the breadcrumb honest about what the buyer will
++ * actually go through.
++ *
++ * Example: visibleSteps [2, 4, 5] (signed in, no attendee fields) gives
++ * ["tickets", "review"] — no "details" stage, because there isn't one.
++ */
++export function getBookingStages(visibleSteps: BookingStep[]): BookingStageId[] {
++	const stages: BookingStageId[] = [];
++	if (visibleSteps.includes(2)) stages.push("tickets");
++	if (visibleSteps.includes(3)) stages.push("details");
++	// Steps 4 and 5 are the same stage to the buyer.
++	if (visibleSteps.includes(4) || visibleSteps.includes(5)) stages.push("review");
++	return stages;
++}
++
+ export function isRequiredFieldAnswered(value: string | undefined | null): boolean {
+ 	return !!value?.trim();
+ }
+diff --git a/packages/tunyt-shared/src/shared.test.ts b/packages/tunyt-shared/src/shared.test.ts
+index b692ecb3a..953d2537c 100644
+--- a/packages/tunyt-shared/src/shared.test.ts
++++ b/packages/tunyt-shared/src/shared.test.ts
+@@ -4,7 +4,9 @@ import {
+ 	clampTeamQuantity,
+ 	createBookingLine,
+ 	effectiveTicketPrice,
++	getBookingStages,
+ 	getInitialBookingStep,
++	getVisibleBookingSteps,
+ 	hasTicketDiscount,
+ 	isDiscountAvailable,
+ 	setBookingLineQuantity,
+@@ -241,6 +243,38 @@ describe("shouldCollectAttendees", () => {
+ 	});
+ });
+ 
++describe("getBookingStages", () => {
++	test("signed in, no attendee fields → no details stage", () => {
++		const steps = getVisibleBookingSteps({
++			isAuthenticated: true,
++			needsAttendees: false,
++		});
++		expect(steps).toEqual([2, 4, 5]);
++		expect(getBookingStages(steps)).toEqual(["tickets", "review"]);
++	});
++	test("signed in, with attendee fields → details stage present", () => {
++		const steps = getVisibleBookingSteps({
++			isAuthenticated: true,
++			needsAttendees: true,
++		});
++		expect(steps).toEqual([2, 3, 4, 5]);
++		expect(getBookingStages(steps)).toEqual(["tickets", "details", "review"]);
++	});
++	test("signed out → identify step is not a stage of its own", () => {
++		const steps = getVisibleBookingSteps({
++			isAuthenticated: false,
++			needsAttendees: true,
++		});
++		expect(steps).toEqual([1, 2, 3, 4, 5]);
++		expect(getBookingStages(steps)).toEqual(["tickets", "details", "review"]);
++	});
++	test("review and payment are one stage", () => {
++		// Steps 4 and 5 are both "review and pay" to the buyer.
++		expect(getBookingStages([4, 5])).toEqual(["review"]);
++		expect(getBookingStages([4])).toEqual(["review"]);
++	});
++});
++
+ // ── errors.ts ───────────────────────────────────────────────────────────────
+ 
+ describe("normalizeApiError", () => {

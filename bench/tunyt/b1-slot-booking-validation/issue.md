@@ -1,0 +1,1 @@
+Booking a slot goes through even when the slot's start time is already in the past, or when it overlaps a booking the venue already has for the same resource. Both should be rejected with a 400 and a clear error message. Existing valid bookings must keep working.

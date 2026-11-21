@@ -1,0 +1,1 @@
+Razorpay sometimes delivers the same webhook event more than once. A repeated payment.captured event (same event id) must not create a second payment record, a second settlement, or send the confirmation message twice. Reply 200 to the duplicate so Razorpay stops retrying. Keep signature verification exactly as it is.

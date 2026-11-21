@@ -1,0 +1,1 @@
+Slots that cross midnight IST (for example 11:00 PM to 1:00 AM) show the wrong end date in booking confirmations, because the date is worked out in UTC. Every date and time we show to users or put in messages must be computed in Asia/Kolkata. Stored timestamps stay in UTC.

@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Turn merged tunyt PRs into replay tasks: the most honest tasks you can get, because a human already solved them.
+
+For each sampled PR:
+  base_sha         the commit the PR started from (first parent of its merge or squash commit)
+  issue.md         the linked issue's title and body; falls back to the PR title and body (flagged: it may
+                   describe the solution, so read it and trim anything that gives the answer away)
+  reference.patch  the human's change, minus test files
+  hidden_test/     only if the PR touched tests: test.sh checks the PR's test files out over whatever the
+                   agent wrote, then runs them
+
+Sampling is by rule, not by hand: PRs that changed app code, skipping migrations, CI, env files and huge
+PRs, bucketed by lines of non-test code changed, then picked at random with a fixed seed.
+
+Usage (from anywhere; --repo is your tunyt clone with gh logged in):
+  bench/mine_replays --repo ~/Devlopment/tunyt-zerd-run --out bench/tunyt --small 5 --medium 6 --large 4
+"""
+import argparse
+import json
+import os
+import random
+import re
+import subprocess
+import sys
+
+TEST = re.compile(r"(\.(spec|test)\.[jt]sx?$)|(^|/)(__tests__|tests?|e2e|unit)/")
+SKIP = re.compile(r"(^|/)prisma/migrations/|^\.github/|(^|/)\.env|^apps/mobile/|^apps/crm/|^infrastructure/")
+CODE = re.compile(r"^apps/(server|web)/.*\.(ts|tsx|js|jsx|mjs|cjs)$")
+
+# how to run a PR's own test files, by app. {files} are relative to the app folder.
+TEST_CMD = {
+    "apps/web/": "cd apps/web && pnpm test:unit {files}",
+    "apps/server/": "cd apps/server && pnpm test {files}",
+}
+
+
+def run(*cmd, cwd=None):
+    p = subprocess.run(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if p.returncode != 0:
+        raise RuntimeError(" ".join(cmd) + ": " + p.stderr.strip()[:300])
+    return p.stdout
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--repo", required=True)
+    ap.add_argument("--out", required=True)
+    ap.add_argument("--limit", type=int, default=300, help="how many recent merged PRs to look at")
+    ap.add_argument("--small", type=int, default=5)
+    ap.add_argument("--medium", type=int, default=6)
+    ap.add_argument("--large", type=int, default=4)
+    ap.add_argument("--seed", type=int, default=7)
+    a = ap.parse_args()
+    repo = os.path.abspath(os.path.expanduser(a.repo))
+
+    try:
+        run("git", "fetch", "--quiet", "origin", cwd=repo)
+    except RuntimeError as e:
+        print("warning: git fetch failed, using local history only:", e)
+    prs = json.loads(run("gh", "pr", "list", "--state", "merged", "--limit", str(a.limit), "--json",
+                         "number,title,body,mergeCommit,files,closingIssuesReferences", cwd=repo))
+    buckets = {"small": [], "medium": [], "large": []}
+    for pr in prs:
+        files = [f["path"] for f in pr.get("files") or []]
+        if not files or any(SKIP.search(f) for f in files) or not pr.get("mergeCommit"):
+            continue
+        code = [f for f in pr["files"] if CODE.search(f["path"]) and not TEST.search(f["path"])]
+        if not code:
+            continue
+        size = sum(f.get("additions", 0) + f.get("deletions", 0) for f in code)
+        if size > 1000:
+            continue
+        b = "small" if size < 50 else "medium" if size <= 300 else "large"
+        buckets[b].append(dict(pr, size=size))
+
+    rnd = random.Random(a.seed)
+    picked = []
+    for b, n in (("small", a.small), ("medium", a.medium), ("large", a.large)):
+        pool = sorted(buckets[b], key=lambda p: p["number"])
+        rnd.shuffle(pool)
+        picked += [(b, p) for p in pool[:n]]
+        print(f"{b:<7} {len(pool):>3} eligible, took {min(n, len(pool))}")
+
+    for b, pr in picked:
+        merge = pr["mergeCommit"]["oid"]
+        try:
+            base = run("git", "rev-parse", merge + "^1", cwd=repo).strip()
+        except RuntimeError as e:
+            print(f"skip #{pr['number']}: {e}")
+            continue
+        tid = f"replay-{b}-pr{pr['number']}"
+        d = os.path.join(a.out, tid)
+        os.makedirs(os.path.join(d, "hidden_test"), exist_ok=True)
+
+        issue, from_pr = None, False
+        for ref in pr.get("closingIssuesReferences") or []:
+            try:
+                iss = json.loads(run("gh", "issue", "view", str(ref["number"]), "--json", "title,body", cwd=repo))
+                issue = f"{iss['title']}\n\n{iss.get('body') or ''}".strip()
+                break
+            except RuntimeError:
+                pass
+        if not issue:
+            issue, from_pr = f"{pr['title']}\n\n{pr.get('body') or ''}".strip(), True
+        with open(os.path.join(d, "issue.md"), "w") as f:
+            f.write(issue + "\n")
+        with open(os.path.join(d, "base_sha"), "w") as f:
+            f.write(base + "\n")
+
+        files = [f["path"] for f in pr["files"]]
+        tests = [f for f in files if TEST.search(f)]
+        non_tests = [f for f in files if f not in tests]
+        patch = run("git", "diff", base, merge, "--", *non_tests, cwd=repo) if non_tests else ""
+        with open(os.path.join(d, "reference.patch"), "w") as f:
+            f.write(patch)
+
+        lines = ["#!/bin/sh", "# Hidden test: the PR's own tests, checked out over whatever the agent wrote.", "set -e"]
+        runnable = False
+        for prefix, cmd in TEST_CMD.items():
+            mine = [t for t in tests if t.startswith(prefix)]
+            if not mine:
+                continue
+            existing = [t for t in mine if run("git", "cat-file", "-t", f"{merge}:{t}", cwd=repo).strip() == "blob"]
+            if not existing:
+                continue
+            lines.append("git checkout " + merge + " -- " + " ".join(f"'{t}'" for t in existing))
+            lines.append(cmd.replace("{files}", " ".join(f"'{t[len(prefix):]}'" for t in existing)))
+            runnable = True
+        if runnable:
+            with open(os.path.join(d, "hidden_test", "test.sh"), "w") as f:
+                f.write("\n".join(lines) + "\n")
+        else:
+            os.rmdir(os.path.join(d, "hidden_test"))
+
+        expect = {"tier": {"small": "T1", "medium": "T2", "large": "T3"}[b], "outcome": "resolve",
+                  "source": f"PR #{pr['number']}", "code_lines_changed": pr["size"],
+                  "issue_from_pr_body": from_pr, "hidden_test": runnable}
+        with open(os.path.join(d, "expect.json"), "w") as f:
+            json.dump(expect, f, indent=2)
+        flag = "  CHECK issue.md: taken from the PR body" if from_pr else ""
+        print(f"wrote {tid}  ({pr['size']} lines, hidden test: {'yes' if runnable else 'no'}){flag}")
+
+    print("\nNext: read every issue.md marked above and cut anything that hands over the solution,")
+    print("then run: bench/duel --validate --repo", a.repo, "--tasks", a.out)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except RuntimeError as e:
+        sys.exit(str(e))

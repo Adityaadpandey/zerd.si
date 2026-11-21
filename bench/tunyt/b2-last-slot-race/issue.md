@@ -1,0 +1,1 @@
+When two people book the last remaining spot of a slot at the same moment, both bookings succeed and the slot ends up overbooked. Exactly one should succeed and the other should get a 409 saying the slot is full. Capacity must hold under concurrent requests, not just sequential ones.

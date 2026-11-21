@@ -1,0 +1,1 @@
+Every API response from the server should carry an X-Request-Id header. If the incoming request already has an X-Request-Id header, reuse that value; otherwise generate a UUID. Include the id in the server's request logs so we can trace a request end to end.

@@ -1,0 +1,2 @@
+{"tier": "T5", "outcome": "resolve", "max_minutes": 90, "max_rounds": 300, "max_cost_usd": 10,
+ "hidden_timeout_s": 1800, "source": "hard head-to-head: checkout integrity"}

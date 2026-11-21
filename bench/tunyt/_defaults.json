@@ -1,0 +1,47 @@
+{
+  "max_minutes": 30,
+  "max_rounds": 100,
+  "max_cost_usd": 3,
+  "prepare": [
+    "pnpm install --offline --frozen-lockfile --filter ./apps/server... --filter ./apps/web... || pnpm install --frozen-lockfile --filter ./apps/server... --filter ./apps/web...",
+    "cd apps/server && pnpm exec prisma generate"
+  ],
+  "checks": [
+    {
+      "name": "server-types",
+      "cwd": "apps/server",
+      "cmd": "pnpm check-types",
+      "when": "apps/server/"
+    },
+    {
+      "name": "server-test",
+      "cwd": "apps/server",
+      "cmd": "pnpm test",
+      "when": "apps/server/"
+    },
+    {
+      "name": "web-types",
+      "cwd": "apps/web",
+      "cmd": "pnpm typecheck",
+      "when": "apps/web/"
+    },
+    {
+      "name": "web-unit",
+      "cwd": "apps/web",
+      "cmd": "pnpm test:unit",
+      "when": "apps/web/"
+    },
+    {
+      "name": "lint-changed",
+      "cwd": ".",
+      "cmd": "pnpm exec biome check --no-errors-on-unmatched {files}"
+    }
+  ],
+  "forbidden_paths": [
+    "prisma/migrations/*",
+    ".env*",
+    ".github/*",
+    "*.pem",
+    "*.key"
+  ]
+}

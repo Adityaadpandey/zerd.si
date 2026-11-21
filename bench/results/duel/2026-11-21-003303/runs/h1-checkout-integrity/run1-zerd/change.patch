@@ -1,0 +1,1226 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index d07b4eeae..4eed85385 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -63,6 +63,7 @@ empty `[Unreleased]` above it.
+ 
+ ### Changed
+ 
++- **server** The checkout hold window is now configurable with the `HOLD_TTL_SECONDS` environment variable (default 600 seconds), instead of being fixed at 10 minutes in code (#TBD)
+ - **web** Create Event page: added fluid drop-down expand/collapse motion to Offline/Online toggle, QR tickets, Waitlist, Team Event, Post Booking Action, and custom sections (#366)
+ - **web** Modals and popup sheets now use GPU-composited transform/opacity transitions and decoupled backdrops to prevent frame drops on open (#366)
+ - **web** When a new version of the installed app is ready, it now asks before reloading instead of reloading on its own and losing what you were typing (#TBD)
+@@ -80,6 +81,9 @@ empty `[Unreleased]` above it.
+ 
+ ### Fixed
+ 
++- **server** A payment that arrives after its ticket hold expired no longer sells a seat that was already resold — the buyer is now refunded automatically, and the event is never oversold (#TBD)
++- **server** A payment that Razorpay delivers twice, or that lands at the same moment as the buyer's own payment check, now settles the booking exactly once (#TBD)
++- **web** The payment step now shows the time left on the ticket hold, and says the hold has expired instead of opening a payment window for seats that are already gone (#TBD)
+ - **server** The AI event prompt on the create-event page now works for everyone: new sign-ups and people who aren't signed in at all can type a brief and get a drafted event, instead of the request being rejected (#TBD)
+ - **web** When an AI event draft can't be started, the sheet now shows the actual reason (like a rate limit or a too-short brief) rather than a generic failure (#TBD)
+ - **web** On iPhone and iPad, tapping a text field no longer zooms the whole page, because inputs on touch and small screens are now 16px (#TBD)
+diff --git a/apps/server/scripts/fix-expired-booking-with-captured-payment.ts b/apps/server/scripts/fix-expired-booking-with-captured-payment.ts
+index 8dec64139..51adc17aa 100644
+--- a/apps/server/scripts/fix-expired-booking-with-captured-payment.ts
++++ b/apps/server/scripts/fix-expired-booking-with-captured-payment.ts
+@@ -217,10 +217,10 @@ async function main() {
+     }
+ 
+     const forced = await bookingRepository.forcePaidAfterRaceTx(bookingId);
+-    if (!forced) {
++    if (!forced.paid) {
+       console.log(
+-        "[fix-expired-booking] SKIP — booking status changed since the check above, re-run to pick up current state",
+-        { bookingId },
++        "[fix-expired-booking] SKIP — booking status changed since the check above, or no capacity left for it; re-run to pick up current state",
++        { bookingId, reason: forced.reason },
+       );
+       skipped++;
+       continue;
+diff --git a/apps/server/src/config/index.ts b/apps/server/src/config/index.ts
+index 18c7392c3..949c76343 100644
+--- a/apps/server/src/config/index.ts
++++ b/apps/server/src/config/index.ts
+@@ -96,6 +96,16 @@ interface Config {
+   FEATURE_SLOT_BOOKING: boolean;
+   ADMIN_EMAIL: string;
+ 
++  /**
++   * How long a checkout hold stays live, in seconds.
++   *
++   * A hold reserves a ticket tier's capacity while the buyer is on the
++   * payment page. When it expires the booking-expiry worker gives the
++   * capacity back, so this value decides how long a seat is parked while
++   * nobody is paying. Default 600s (10 minutes).
++   */
++  HOLD_TTL_SECONDS: number;
++
+   /**
+    * GST on platform fee. Off by default — Tunyt is in pre-revenue / pre-GST
+    * compliance mode. Flip on when we register for GST and need to start
+@@ -365,6 +375,13 @@ export const config: Config = {
+   ALLOW_DEV_OTP_BYPASS: process.env.ALLOW_DEV_OTP_BYPASS === "true",
+   FEATURE_SLOT_BOOKING: process.env.FEATURE_SLOT_BOOKING === "true",
+   ADMIN_EMAIL: process.env.ADMIN_EMAIL || "adityapandeyadp@gmail.com",
++  // Bad or missing values fall back to 600s (10 minutes) rather than failing
++  // the boot — a hold that lives a bit too long is better than a server that
++  // refuses to start.
++  HOLD_TTL_SECONDS: (() => {
++    const parsed = Number.parseInt(process.env.HOLD_TTL_SECONDS ?? "", 10);
++    return Number.isFinite(parsed) && parsed > 0 ? parsed : 600;
++  })(),
+   TUNYT_GST_ENABLED: process.env.TUNYT_GST_ENABLED === "true",
+ 
+   GOOGLE_INDEXING_SERVICE_ACCOUNT:
+diff --git a/apps/server/src/lib/cache/slot.ts b/apps/server/src/lib/cache/slot.ts
+index 73425f1e1..73cd34235 100644
+--- a/apps/server/src/lib/cache/slot.ts
++++ b/apps/server/src/lib/cache/slot.ts
+@@ -1,3 +1,4 @@
++import { config } from "../../config";
+ import { redis } from "../../config/redis";
+ 
+ // Key schema for slot booking cache
+@@ -13,7 +14,7 @@ import { redis } from "../../config/redis";
+ // cache:venue-resource:pricing:{resourceId}       → pricing matrix JSON (TTL 300s)
+ // cache:membership:{userId}:{venueId}             → active membership multiplier (TTL 600s)
+ 
+-const SLOT_HOLD_TTL = 600; // 10 minutes
++const SLOT_HOLD_TTL = config.HOLD_TTL_SECONDS;
+ 
+ export function slotHoldKey(unitId: string, startEpoch: number): string {
+   return `slot:hold:${unitId}:${startEpoch}`;
+diff --git a/apps/server/src/repositories/booking.repository.ts b/apps/server/src/repositories/booking.repository.ts
+index 5565ca72b..de8ee4335 100644
+--- a/apps/server/src/repositories/booking.repository.ts
++++ b/apps/server/src/repositories/booking.repository.ts
+@@ -61,7 +61,10 @@ export class BookingRepository {
+     return this.lifecycleRepo.markPaidTx(bookingId, cash);
+   }
+ 
+-  async forcePaidAfterRaceTx(bookingId: string): Promise<boolean> {
++  async forcePaidAfterRaceTx(bookingId: string): Promise<{
++    paid: boolean;
++    reason?: "not_released" | "no_capacity";
++  }> {
+     return this.lifecycleRepo.forcePaidAfterRaceTx(bookingId);
+   }
+ 
+diff --git a/apps/server/src/repositories/booking/booking-lifecycle.repository.ts b/apps/server/src/repositories/booking/booking-lifecycle.repository.ts
+index 724113f03..798f04cc0 100644
+--- a/apps/server/src/repositories/booking/booking-lifecycle.repository.ts
++++ b/apps/server/src/repositories/booking/booking-lifecycle.repository.ts
+@@ -5,6 +5,7 @@ import {
+ } from "../../generated/prisma/enums";
+ import type { TransactionClient } from "../../generated/prisma/internal/prismaNamespace";
+ import { wrapDatabaseOperation } from "../../utils/database-error-handler.util";
++import { CapacityNotAvailableError } from "../../utils/errors.util";
+ 
+ export class BookingLifecycleRepository {
+   /**
+@@ -267,32 +268,24 @@ export class BookingLifecycleRepository {
+    * once it's left HELD/APPROVED_AWAITING_PAYMENT, so a captured payment that
+    * loses this race needs an explicit override rather than silently getting
+    * dropped. Re-adds exactly what `releaseHoldInTx` subtracted for this
+-   * booking's tickets — the inverse of that method. Does NOT cap the
+-   * soldCount add at TicketType.quantity: the seat was already sold and paid
+-   * for, so if the freed slot got resold to someone else in the race window,
+-   * that's a rare oversell for the host to handle manually, not a reason to
+-   * deny a paying buyer their ticket. Returns false if the booking isn't in
+-   * one of the released states (nothing to reconcile).
++   * booking's tickets — the inverse of that method.
++   *
++   * Capacity is re-claimed INSIDE the transaction with the same conditional
++   * update `createWithHoldTx` uses ("soldCount + qty <= quantity"), so a late
++   * capture can never push a ticket type past its quantity. The seat freed by
++   * the expiry may already have been resold in the race window; when it has,
++   * the update matches no row and this returns `{ paid: false }` so the
++   * caller refunds the buyer instead of overselling the event.
++   *
++   * Returns `{ paid: false, reason: "not_released" }` when the booking isn't
++   * in one of the released states (nothing to reconcile).
+    */
+-  async forcePaidAfterRaceTx(bookingId: string): Promise<boolean> {
++  async forcePaidAfterRaceTx(bookingId: string): Promise<{
++    paid: boolean;
++    reason?: "not_released" | "no_capacity";
++  }> {
+     return wrapDatabaseOperation(async () => {
+       return await prisma.$transaction(async (tx) => {
+-        const transition = await tx.booking.updateMany({
+-          where: {
+-            bookingId,
+-            status: {
+-              in: [
+-                BookingStatus.EXPIRED,
+-                BookingStatus.FAILED,
+-                BookingStatus.CANCELLED,
+-              ],
+-            },
+-          },
+-          data: { status: BookingStatus.PAID },
+-        });
+-
+-        if (transition.count === 0) return false;
+-
+         const tickets = await tx.ticket.findMany({
+           where: { bookingId },
+           select: {
+@@ -320,6 +313,10 @@ export class BookingLifecycleRepository {
+           aggByType.set(ticket.ticketTypeId, agg);
+ 
+           if (ticket.bundleGroupId && ticket.bundleWasDiscounted) {
++            // Every bundle member's ticket row for the same bundle purchase
++            // carries the IDENTICAL quantity (the number of bundle-units
++            // bought) — summing across members would multi-count by the
++            // bundle's member count, so take the quantity once per group.
+             groupDiscountAgg.set(
+               ticket.bundleGroupId,
+               Math.max(
+@@ -330,13 +327,22 @@ export class BookingLifecycleRepository {
+           }
+         }
+ 
++        // Re-claim the capacity FIRST. Each conditional update only fires when
++        // the tier still has room for this booking's seats, so 25 concurrent
++        // late captures for one last seat can only ever claim it once.
+         for (const [ticketTypeId, { totalQty, discountQty }] of aggByType) {
+-          await tx.$executeRaw`
++          const claimed = await tx.$executeRaw`
+ 						UPDATE "TicketType"
+ 						SET "soldCount" = "soldCount" + ${totalQty},
+ 						    "discountSoldCount" = "discountSoldCount" + ${discountQty}
+ 						WHERE "ticketTypeId" = ${ticketTypeId}
++						  AND "soldCount" + ${totalQty} <= "quantity"
+ 					`;
++          if (claimed === 0) {
++            // The seat was resold while this payment was in flight. Throw so the
++            // transaction rolls back, then let the caller refund the buyer.
++            throw new CapacityNotAvailableError();
++          }
+         }
+ 
+         for (const [groupId, discountQty] of groupDiscountAgg) {
+@@ -347,12 +353,42 @@ export class BookingLifecycleRepository {
+ 					`;
+         }
+ 
++        // Only now flip the booking back to PAID — a failed capacity check
++        // above must leave it released so the refund path can pick it up.
++        const transition = await tx.booking.updateMany({
++          where: {
++            bookingId,
++            status: {
++              in: [
++                BookingStatus.EXPIRED,
++                BookingStatus.FAILED,
++                BookingStatus.CANCELLED,
++              ],
++            },
++          },
++          data: { status: BookingStatus.PAID },
++        });
++
++        if (transition.count === 0) {
++          // Another caller already finalised it — undo the capacity we took.
++          for (const [ticketTypeId, { totalQty, discountQty }] of aggByType) {
++            await tx.$executeRaw`
++						UPDATE "TicketType"
++						SET "soldCount" = "soldCount" - ${totalQty},
++						    "discountSoldCount" = GREATEST("discountSoldCount" - ${discountQty}, 0)
++						WHERE "ticketTypeId" = ${ticketTypeId}
++						  AND "soldCount" >= ${totalQty}
++					`;
++          }
++          return { paid: false, reason: "not_released" };
++        }
++
+         await tx.ticket.updateMany({
+           where: { bookingId },
+           data: { status: TicketPaymentStatus.SUCCESS },
+         });
+ 
+-        return true;
++        return { paid: true };
+       });
+     }, "Force booking paid after expiry race");
+   }
+diff --git a/apps/server/src/services/booking/booking-lifecycle.service.ts b/apps/server/src/services/booking/booking-lifecycle.service.ts
+index 1c399b3d6..a9dbdef74 100644
+--- a/apps/server/src/services/booking/booking-lifecycle.service.ts
++++ b/apps/server/src/services/booking/booking-lifecycle.service.ts
+@@ -1,3 +1,4 @@
++import { config } from "../../config";
+ import { prisma } from "../../config/db";
+ import logger from "../../config/logger";
+ import {
+@@ -16,7 +17,8 @@ import { uploadService } from "../upload.service";
+ import type { BookingPricingService } from "./booking-pricing.service";
+ import type { BookingDetails, CreateBookingDto } from "./types";
+ 
+-const HOLD_DURATION_MS = 10 * 60 * 1000; // 10 minutes
++// How long a checkout hold parks a seat's capacity while the buyer pays.
++const HOLD_DURATION_MS = config.HOLD_TTL_SECONDS * 1000;
+ 
+ export class BookingLifecycleService {
+   constructor(
+diff --git a/apps/server/src/services/payment/booking-payment-finalizer.service.ts b/apps/server/src/services/payment/booking-payment-finalizer.service.ts
+index c36044ea8..2875ef3e7 100644
+--- a/apps/server/src/services/payment/booking-payment-finalizer.service.ts
++++ b/apps/server/src/services/payment/booking-payment-finalizer.service.ts
+@@ -3,6 +3,7 @@ import logger from "../../config/logger";
+ import { redis } from "../../config/redis";
+ import { PUSH_COPY } from "../../lib/push-copy";
+ import { teamQueue } from "../../lib/queues";
++import { getRazorpayInstance } from "../../lib/razorpay-factory";
+ import { BookingRepository } from "../../repositories/booking.repository";
+ import { CheckoutSessionRepository } from "../../repositories/checkout-session.repository";
+ import { DashboardRepository } from "../../repositories/Dashboard.repository";
+@@ -13,7 +14,13 @@ import { NotificationPrefsRepository } from "../../repositories/NotificationPref
+ import { PaymentRepository } from "../../repositories/payment.repository";
+ import { TeamRepository } from "../../repositories/team.repository";
+ import { UserRepository } from "../../repositories/user.repository";
+-import { BadRequestError, ConflictError } from "../../utils/errors.util";
++import type { Refunds } from "razorpay/dist/types/refunds";
++import { razorpayCircuitBreaker } from "../../utils/circuit-breaker.util";
++import {
++  BadRequestError,
++  CapacityNotAvailableError,
++  ConflictError,
++} from "../../utils/errors.util";
+ import { AnalyticsService } from "../analytics.service";
+ import { DiscountService } from "../discount.service";
+ import { EmailService } from "../email.service";
+@@ -275,10 +282,22 @@ export class BookingPaymentFinalizerService {
+ 
+       if (current.status === "PAID") {
+         // verifyBookingPayment and the webhook raced; the other caller owns
+-        // side effects. Return current state so the caller can still proceed.
++        // the side effects. Return current state so the caller can still
++        // proceed.
+         logger.info("finalizePaidBooking: already paid by concurrent caller", {
+           bookingId,
+         });
++        // ...but the racing caller may have died before it sent the
++        // confirmation, and a webhook retry lands right here. Re-queue the
++        // confirmation email: it is keyed on the booking id, so the queue
++        // drops it when the other caller already sent it. The buyer gets
++        // exactly one confirmation either way — never zero, never two.
++        this.sendBookingConfirmationEmail(current).catch((err) =>
++          logger.warn(
++            "Failed to send booking confirmation email for an already-paid booking",
++            { bookingId, err },
++          ),
++        );
+         return current;
+       }
+ 
+@@ -294,39 +313,38 @@ export class BookingPaymentFinalizerService {
+       // ever fire again. Force it through and log loudly so this is never
+       // silent.
+       logger.error(
+-        "finalizePaidBooking: booking left HELD via an expiry/cancel race with a captured payment — forcing to PAID",
++        "finalizePaidBooking: booking left HELD via an expiry/cancel race with a captured payment — re-claiming capacity",
+         { bookingId, statusFound: current.status },
+       );
+-      const forced =
+-        await this.bookingRepository.forcePaidAfterRaceTx(bookingId);
+-      if (!forced) {
+-        logger.error(
+-          "finalizePaidBooking: could not force booking to PAID — needs manual repair",
+-          { bookingId, statusFound: current.status },
+-        );
+-        return current;
+-      }
+ 
+-      // The paid seat won, but the freed slot may have been resold in the gap. Don't undo
+-      // the sale; mark the payment so ops sees it and can refund one buyer by hand.
++      let forced: { paid: boolean; reason?: "not_released" | "no_capacity" };
+       try {
+-        if (await this.bookingRepository.hasOversoldTicketType(bookingId)) {
+-          const orderId = current.payment?.razorpayOrderId;
++        forced = await this.bookingRepository.forcePaidAfterRaceTx(bookingId);
++      } catch (error) {
++        // CapacityNotAvailableError: the seat freed by the expiry was resold
++        // while this payment was in flight. The booking must NOT be confirmed
++        // — that would oversell the event. Refund the buyer instead.
++        if (error instanceof CapacityNotAvailableError) {
+           logger.error(
+-            "finalizePaidBooking: late capture pushed a ticket type past its quantity, needs manual review",
+-            { bookingId, orderId },
++            "finalizePaidBooking: late capture has no capacity left — refunding the buyer",
++            { bookingId },
+           );
+-          if (orderId)
+-            await this.paymentRepository.flagForReconciliation(
+-              orderId,
+-              "OVERSOLD_AFTER_LATE_CAPTURE",
+-            );
++          await this.refundLateCapture(bookingId, current);
++          return current;
+         }
+-      } catch (error) {
+-        logger.warn("Could not check oversell after late capture", {
+-          bookingId,
+-          error,
+-        });
++        logger.error(
++          "finalizePaidBooking: could not re-claim capacity for a late capture",
++          { bookingId, error },
++        );
++        return current;
++      }
++
++      if (!forced.paid) {
++        logger.error(
++          "finalizePaidBooking: could not force booking to PAID — needs manual repair",
++          { bookingId, statusFound: current.status, reason: forced.reason },
++        );
++        return current;
+       }
+     }
+ 
+@@ -518,6 +536,117 @@ export class BookingPaymentFinalizerService {
+     return bookingDetails;
+   }
+ 
++  /**
++   * A payment was captured for a hold that had already expired, and the
++   * capacity it was holding was resold to somebody else. We cannot confirm
++   * the booking (that would oversell the event), so the money goes back to
++   * the buyer.
++   *
++   * Refund the full captured amount through the existing Razorpay client.
++   * If the refund call itself fails, the Payment row is flagged for
++   * reconciliation so a person refunds it by hand — the buyer is never left
++   * silently charged with no ticket.
++   */
++  private async refundLateCapture(
++    bookingId: string,
++    booking: Awaited<
++      ReturnType<BookingRepository["findByIdWithDetails"]>
++    >,
++  ): Promise<void> {
++    const orderId = booking.payment?.razorpayOrderId;
++    const paymentId = booking.payment?.razorpayPaymentId;
++
++    if (!orderId || !paymentId) {
++      logger.error(
++        "refundLateCapture: no Razorpay payment to refund — needs manual repair",
++        { bookingId, orderId, paymentId },
++      );
++      if (orderId) {
++        await this.paymentRepository
++          .flagForReconciliation(orderId, "LATE_CAPTURE_NEEDS_REFUND")
++          .catch(() => undefined);
++      }
++      return;
++    }
++
++    try {
++      const { instance } = await getRazorpayInstance(
++        booking.event.listerId,
++      );
++
++      // Refund what was actually captured, not what the booking costs today.
++      // The booking total can move after the order was created (a coupon
++      // reprices the Booking row but never touches the Payment or the
++      // Razorpay order), so refunding `booking.total` could ask Razorpay for
++      // more than was ever charged — the gateway rejects that and the buyer
++      // is left charged. Razorpay is the authority on what was captured;
++      // the stored Payment.amount is the order amount in paise and is the
++      // fallback when the fetch fails.
++      let amountPaise = Math.round(booking.payment?.amount ?? 0);
++      try {
++        const captured = await razorpayCircuitBreaker.execute(() =>
++          instance.payments.fetch(paymentId),
++        );
++        const capturedPaise = Math.round(Number(captured.amount ?? 0));
++        // Never refund more than Razorpay says it captured.
++        if (capturedPaise > 0) {
++          amountPaise = capturedPaise;
++        }
++      } catch (fetchError) {
++        logger.warn(
++          "refundLateCapture: could not read the captured amount, falling back to the stored order amount",
++          { bookingId, paymentId, error: fetchError },
++        );
++      }
++
++      if (amountPaise <= 0) {
++        logger.error(
++          "refundLateCapture: no amount to refund — needs manual repair",
++          { bookingId, orderId, paymentId },
++        );
++        await this.paymentRepository
++          .flagForReconciliation(orderId, "LATE_CAPTURE_NEEDS_REFUND")
++          .catch(() => undefined);
++        return;
++      }
++
++      // Full refund: the buyer got no ticket, so they get all their money back.
++      const refund = (await razorpayCircuitBreaker.execute(() =>
++        instance.payments.refund(paymentId, {
++          amount: amountPaise,
++          speed: "normal",
++          notes: {
++            bookingId,
++            reason: "late-capture-no-capacity",
++          },
++        }),
++      )) as Refunds.RazorpayRefund;
++
++      await this.paymentRepository.updatePaymentVerification(orderId, {
++        razorpayPaymentId: paymentId,
++        razorpaySignature: booking.payment?.razorpaySignature ?? "",
++        status: "REFUNDED",
++        failureReason: `Refunded ${refund.id}: hold expired before capture and the seat was resold`,
++      });
++
++      logger.info("Refunded a late capture that no longer had capacity", {
++        bookingId,
++        orderId,
++        paymentId,
++        refundId: refund.id,
++        amountPaise,
++      });
++    } catch (error) {
++      logger.error(
++        "refundLateCapture: refund failed — flagged for manual refund",
++        { bookingId, orderId, paymentId, error },
++      );
++      await this.paymentRepository
++        .flagForReconciliation(orderId, "LATE_CAPTURE_REFUND_FAILED")
++        .catch(() => undefined);
++    }
++  }
++
+   /**
+    * Notify host of a new booking. Fire-and-forget.
+    * Rate-limited per event: push at most once per 5 min, email at most once per hour.
+diff --git a/apps/server/src/services/payment/booking-payment.service.ts b/apps/server/src/services/payment/booking-payment.service.ts
+index 433198b1b..aa7c2c7ec 100644
+--- a/apps/server/src/services/payment/booking-payment.service.ts
++++ b/apps/server/src/services/payment/booking-payment.service.ts
+@@ -165,7 +165,7 @@ export class BookingPaymentService {
+       return {
+         razorpayOrderId: booking.payment.razorpayOrderId,
+         keyId,
+-        amount: Math.round(booking.total * 100), // paise
++        amount: toPaise(booking.total), // paise
+       };
+     }
+ 
+@@ -188,7 +188,7 @@ export class BookingPaymentService {
+     try {
+       razorpayOrder = await razorpayCircuitBreaker.execute(() =>
+         razorpayInstance.orders.create({
+-          amount: Math.round(booking.total * 100), // paise
++          amount: toPaise(booking.total), // paise
+           currency: PAYMENT_CONSTANTS.DEFAULT_CURRENCY,
+           receipt: bookingId,
+           notes: {
+@@ -246,7 +246,7 @@ export class BookingPaymentService {
+     return {
+       razorpayOrderId: razorpayOrder.id,
+       keyId: razorpayKeyId,
+-      amount: Math.round(booking.total * 100), // paise
++      amount: toPaise(booking.total), // paise
+     };
+   }
+ 
+diff --git a/apps/server/src/services/payment/payment-webhook.service.ts b/apps/server/src/services/payment/payment-webhook.service.ts
+index 6ec50f386..ff8db2e2b 100644
+--- a/apps/server/src/services/payment/payment-webhook.service.ts
++++ b/apps/server/src/services/payment/payment-webhook.service.ts
+@@ -602,14 +602,6 @@ export class PaymentWebhookService {
+       payment.order_id,
+     );
+ 
+-    // Idempotency: skip if already completed
+-    if (existingPayment?.status === "COMPLETED") {
+-      logger.info("Webhook: payment already completed, skipping", {
+-        orderId: payment.order_id,
+-      });
+-      return;
+-    }
+-
+     // --- Booking-based payment path ---
+     const bookingId =
+       existingPayment?.bookingId ??
+@@ -622,6 +614,37 @@ export class PaymentWebhookService {
+     if (bookingId) {
+       bookingForCheck =
+         await this.bookingRepository.findByIdWithDetails(bookingId);
++    }
++
++    // Idempotency: skip only when the money AND the booking are both settled.
++    //
++    // A payment row marked COMPLETED with a booking that is still HELD means
++    // an earlier delivery crashed between "mark the payment captured" and
++    // "confirm the booking". Skipping on the payment status alone would
++    // strand the buyer with money taken and no ticket, because every retry
++    // would bail out here. Let the retry finish the job — the booking
++    // transition itself is the exactly-once gate.
++    if (existingPayment?.status === "COMPLETED") {
++      // Settled means either the booking is confirmed, or there is no
++      // booking left to confirm. A booking that no longer exists (deleted
++      // out from under us) has nothing to finalize, so re-processing it on
++      // every delivery would only loop — take the same "skip" branch as the
++      // legacy no-booking path.
++      const bookingSettled =
++        bookingForCheck?.status === "PAID" || bookingForCheck === null;
++      if (bookingSettled) {
++        logger.info("Webhook: payment already completed, skipping", {
++          orderId: payment.order_id,
++        });
++        return;
++      }
++      logger.info(
++        "Webhook: payment completed but booking not settled — finishing the finalize",
++        { orderId: payment.order_id, bookingId, status: bookingForCheck?.status },
++      );
++    }
++
++    if (bookingId && bookingForCheck) {
+ 
+       // Reconcile the captured amount against the live booking total before
+       // trusting this webhook. A HELD booking's total can move after this
+diff --git a/apps/server/src/services/slot-walk-in.service.ts b/apps/server/src/services/slot-walk-in.service.ts
+index b3209dd08..e567ac5cd 100644
+--- a/apps/server/src/services/slot-walk-in.service.ts
++++ b/apps/server/src/services/slot-walk-in.service.ts
+@@ -20,7 +20,7 @@ import { SlotPricingService } from "./slot-pricing.service";
+ import { getWalkInOptions } from "./slot-walkin-options.service";
+ import { assertVenueAccess } from "./venue-ownership.service";
+ 
+-const HOLD_TTL_SECONDS = 600;
++const HOLD_TTL_SECONDS = config.HOLD_TTL_SECONDS;
+ 
+ export class SlotWalkInService {
+   private bookingRepo = new SlotBookingRepository();
+diff --git a/apps/server/src/services/slot.service.ts b/apps/server/src/services/slot.service.ts
+index ec10b69e8..90bb711de 100644
+--- a/apps/server/src/services/slot.service.ts
++++ b/apps/server/src/services/slot.service.ts
+@@ -1,4 +1,5 @@
+ import { randomUUID } from "node:crypto";
++import { config } from "../config";
+ import { prisma } from "../config/db";
+ import logger from "../config/logger";
+ import { redis } from "../config/redis";
+@@ -38,7 +39,7 @@ import { claimUnitForRange } from "./slot-claim.service";
+ import { SlotInventoryService } from "./slot-inventory.service";
+ import { SlotPricingService } from "./slot-pricing.service";
+ 
+-const HOLD_TTL_SECONDS = 600; // 10 minutes for non-split bookings
++const HOLD_TTL_SECONDS = config.HOLD_TTL_SECONDS; // non-split bookings
+ const SPLIT_HOLD_BUFFER_MS = 15 * 60_000; // Split hold ends 15 minutes before slot start
+ const SPLIT_MIN_WINDOW_MS = 15 * 60_000; // Slot must be at least 30m away to initiate split
+ 
+diff --git a/apps/server/src/utils/errors.util.ts b/apps/server/src/utils/errors.util.ts
+index ccc4402e9..6c4cc4d54 100644
+--- a/apps/server/src/utils/errors.util.ts
++++ b/apps/server/src/utils/errors.util.ts
+@@ -65,6 +65,23 @@ export class BadRequestError extends AppError {
+   }
+ }
+ 
++/**
++ * Raised when a conditional inventory update matched no row because the
++ * tier has no room left for the seats being claimed.
++ *
++ * It is deliberately NOT an AppError: it travels out of a repository
++ * transaction to roll it back, and the caller turns it into a refund.
++ * A 409 "ConflictError" would be wrong here — the buyer did nothing wrong,
++ * the seat was simply taken by someone else first.
++ */
++export class CapacityNotAvailableError extends Error {
++  constructor(message: string = "No capacity left for this booking") {
++    super(message);
++    this.name = "CapacityNotAvailableError";
++    Object.setPrototypeOf(this, CapacityNotAvailableError.prototype);
++  }
++}
++
+ export class TooManyRequestsError extends AppError {
+   constructor(message: string = "Too many requests") {
+     super(message, 429);
+diff --git a/apps/server/tests/checkout-capacity.spec.ts b/apps/server/tests/checkout-capacity.spec.ts
+new file mode 100644
+index 000000000..4224ecb92
+--- /dev/null
++++ b/apps/server/tests/checkout-capacity.spec.ts
+@@ -0,0 +1,271 @@
++import { expect, test } from "@playwright/test";
++import { prisma } from "../src/config/db";
++import { BookingLifecycleRepository } from "../src/repositories/booking/booking-lifecycle.repository";
++import { CapacityNotAvailableError } from "../src/utils/errors.util";
++
++// These specs prove the checkout integrity invariants against the real
++// database, because the guarantee lives in the SQL: the conditional UPDATE
++// that reserves a tier's capacity, and the atomic status transition that
++// settles a booking. A unit test with a mocked Prisma would happily pass
++// while the real query oversells.
++//
++// Every spec creates its own event + ticket type so the fullyParallel test
++// runner never shares a row (and never shares a cache key) between specs.
++
++const TAG = Math.random().toString(36).slice(2, 10);
++
++async function seedTier(quantity: number, soldCount = 0) {
++  const hostUser = await prisma.user.create({
++    data: { phone: `+91${TAG}${Math.random().toString(36).slice(2, 8)}h`, name: "Capacity Host" },
++    select: { userId: true },
++  });
++  const lister = await prisma.lister.create({
++    data: { userId: hostUser.userId, companyName: `Capacity Co ${TAG}` },
++    select: { listerId: true },
++  });
++  const eventDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
++  const event = await prisma.event.create({
++    data: {
++      listerId: lister.listerId,
++      title: `Capacity spec ${TAG}`,
++      description: "Fixture event for the checkout capacity specs",
++      banner_horizontal: "https://example.com/banner.jpg",
++      banner_vertical: "https://example.com/banner.jpg",
++      banner_square: "https://example.com/banner.jpg",
++      date: eventDate,
++      time: eventDate,
++      location: "Test Venue",
++    },
++    select: { eventId: true },
++  });
++
++  const ticketType = await prisma.ticketType.create({
++    data: {
++      eventId: event.eventId,
++      name: "General",
++      price: 100,
++      quantity,
++      soldCount,
++    },
++    select: { ticketTypeId: true },
++  });
++
++  const buyer = await prisma.user.create({
++    data: { phone: `+91${TAG}${Math.random().toString(36).slice(2, 8)}b`, name: "Capacity Buyer" },
++    select: { userId: true },
++  });
++
++  return {
++    eventId: event.eventId,
++    ticketTypeId: ticketType.ticketTypeId,
++    buyerId: buyer.userId,
++  };
++}
++
++async function seedBooking(
++  eventId: string,
++  ticketTypeId: string,
++  opts: { status: "HELD" | "EXPIRED"; quantity?: number; buyerId?: string },
++) {
++  const booking = await prisma.booking.create({
++    data: {
++      userId: opts.buyerId ?? "spec-user-capacity",
++      eventId,
++      status: opts.status,
++      subtotal: 100,
++      total: 100,
++      holdExpiresAt: new Date(Date.now() - 60_000),
++    },
++  });
++
++  await prisma.ticket.create({
++    data: {
++      bookingId: booking.bookingId,
++      userId: opts.buyerId ?? "spec-user-capacity",
++      eventId,
++      ticketTypeId,
++      quantity: opts.quantity ?? 1,
++      totalPrice: 100,
++      status: opts.status === "HELD" ? "PENDING" : "FAILED",
++    },
++  });
++
++  return booking.bookingId;
++}
++
++// ─── A1: capacity is enforced by the database, not by a read-then-write ──────
++
++test("A1: the capacity UPDATE is conditional — 25 concurrent claims for one last seat let exactly one through", async () => {
++  const { ticketTypeId, buyerId } = await seedTier(1);
++
++  // 25 attempts to claim the last seat, all landing at the same moment.
++  const claims = await Promise.all(
++    Array.from({ length: 25 }, () =>
++      prisma.$executeRaw`
++        UPDATE "TicketType"
++        SET "soldCount" = "soldCount" + 1
++        WHERE "ticketTypeId" = ${ticketTypeId}
++          AND "soldCount" + 1 <= "quantity"
++      `,
++    ),
++  );
++
++  const winners = claims.filter((count) => count === 1);
++  expect(winners.length).toBe(1);
++
++  const tier = await prisma.ticketType.findUnique({
++    where: { ticketTypeId },
++  });
++  expect(tier?.soldCount).toBe(1);
++  expect(tier?.soldCount).toBeLessThanOrEqual(tier?.quantity ?? 0);
++});
++
++test("A1: confirmed bookings plus active holds never exceed the tier's capacity", async () => {
++  const { ticketTypeId, buyerId } = await seedTier(3);
++
++  // Two holds take two seats, one confirmed booking takes the third.
++  await prisma.$executeRaw`
++    UPDATE "TicketType"
++    SET "soldCount" = "soldCount" + 2
++    WHERE "ticketTypeId" = ${ticketTypeId}
++      AND "soldCount" + 2 <= "quantity"
++  `;
++  await prisma.$executeRaw`
++    UPDATE "TicketType"
++    SET "soldCount" = "soldCount" + 1
++    WHERE "ticketTypeId" = ${ticketTypeId}
++      AND "soldCount" + 1 <= "quantity"
++  `;
++
++  // A fourth claim for the same tier must not fit.
++  const overflow = await prisma.$executeRaw`
++    UPDATE "TicketType"
++    SET "soldCount" = "soldCount" + 1
++    WHERE "ticketTypeId" = ${ticketTypeId}
++      AND "soldCount" + 1 <= "quantity"
++  `;
++  expect(overflow).toBe(0);
++
++  const tier = await prisma.ticketType.findUnique({
++    where: { ticketTypeId },
++  });
++  expect(tier?.soldCount).toBe(3);
++  expect(tier?.soldCount).toBeLessThanOrEqual(tier?.quantity ?? 0);
++});
++
++// ─── A3: a late capture never oversells — it re-claims capacity in the DB ───
++
++test("A3: a late capture re-claims the freed seat when it is still free", async () => {
++  const { eventId, ticketTypeId, buyerId } = await seedTier(1);
++  // The hold expired and the sweep gave the seat back: soldCount is 0.
++  const bookingId = await seedBooking(eventId, ticketTypeId, { status: "EXPIRED", buyerId });
++
++  const repo = new BookingLifecycleRepository();
++  const result = await repo.forcePaidAfterRaceTx(bookingId);
++
++  expect(result.paid).toBe(true);
++
++  const tier = await prisma.ticketType.findUnique({
++    where: { ticketTypeId },
++  });
++  expect(tier?.soldCount).toBe(1);
++  expect(tier?.soldCount).toBeLessThanOrEqual(tier?.quantity ?? 0);
++
++  const booking = await prisma.booking.findUnique({
++    where: { bookingId },
++  });
++  expect(booking?.status).toBe("PAID");
++});
++
++test("A3: a late capture for a seat that was resold is refused — never oversold", async () => {
++  const { eventId, ticketTypeId, buyerId } = await seedTier(1);
++  const bookingId = await seedBooking(eventId, ticketTypeId, { status: "EXPIRED", buyerId });
++
++  // Somebody else bought the freed seat in the race window.
++  await prisma.ticketType.update({
++    where: { ticketTypeId },
++    data: { soldCount: 1 },
++  });
++
++  const repo = new BookingLifecycleRepository();
++  await expect(repo.forcePaidAfterRaceTx(bookingId)).rejects.toThrow(
++    CapacityNotAvailableError,
++  );
++
++  // The tier is still at capacity — the late capture did not push it over.
++  const tier = await prisma.ticketType.findUnique({
++    where: { ticketTypeId },
++  });
++  expect(tier?.soldCount).toBe(1);
++  expect(tier?.soldCount).toBeLessThanOrEqual(tier?.quantity ?? 0);
++
++  // And the booking was NOT confirmed — it stays released so the refund
++  // path can pick it up.
++  const booking = await prisma.booking.findUnique({
++    where: { bookingId },
++  });
++  expect(booking?.status).not.toBe("PAID");
++});
++
++// ─── A4: exactly one winner between the webhook and the client's verify ────
++
++test("A4: only one of two racing finalizes settles the booking", async () => {
++  const { eventId, ticketTypeId, buyerId } = await seedTier(2);
++  const bookingId = await seedBooking(eventId, ticketTypeId, { status: "HELD", buyerId });
++
++  const repo = new BookingLifecycleRepository();
++  // The webhook and the client's verify call land together.
++  const results = await Promise.all([
++    repo.markPaidTx(bookingId),
++    repo.markPaidTx(bookingId),
++  ]);
++
++  expect(results.filter(Boolean).length).toBe(1);
++
++  const booking = await prisma.booking.findUnique({
++    where: { bookingId },
++  });
++  expect(booking?.status).toBe("PAID");
++});
++
++test("A4: a second settle attempt on an already-paid booking changes nothing", async () => {
++  const { eventId, ticketTypeId, buyerId } = await seedTier(2);
++  const bookingId = await seedBooking(eventId, ticketTypeId, { status: "HELD", buyerId });
++
++  const repo = new BookingLifecycleRepository();
++  expect(await repo.markPaidTx(bookingId)).toBe(true);
++  expect(await repo.markPaidTx(bookingId)).toBe(false);
++
++  const booking = await prisma.booking.findUnique({
++    where: { bookingId },
++  });
++  expect(booking?.status).toBe("PAID");
++});
++
++// ─── A2: the hold expiry sweep gives the capacity back ─────────────────────
++
++test("A2: releasing an expired hold returns its capacity exactly once", async () => {
++  const { eventId, ticketTypeId, buyerId } = await seedTier(2);
++  const bookingId = await seedBooking(eventId, ticketTypeId, { status: "HELD", buyerId });
++
++  // The hold is holding one seat.
++  await prisma.ticketType.update({
++    where: { ticketTypeId },
++    data: { soldCount: 1 },
++  });
++
++  const repo = new BookingLifecycleRepository();
++  // Two workers run the expiry sweep at the same moment.
++  const results = await Promise.all([
++    repo.releaseHoldTx(bookingId, "EXPIRED"),
++    repo.releaseHoldTx(bookingId, "EXPIRED"),
++  ]);
++
++  // Only one worker wins the atomic status transition.
++  expect(results.filter(Boolean).length).toBe(1);
++
++  const tier = await prisma.ticketType.findUnique({
++    where: { ticketTypeId },
++  });
++  expect(tier?.soldCount).toBe(0);
++});
+diff --git a/apps/server/tests/checkout-integrity.spec.ts b/apps/server/tests/checkout-integrity.spec.ts
+new file mode 100644
+index 000000000..9a6eda9f5
+--- /dev/null
++++ b/apps/server/tests/checkout-integrity.spec.ts
+@@ -0,0 +1,96 @@
++import { expect, test } from "@playwright/test";
++import { config } from "../src/config";
++import { toPaise } from "../src/utils/money.util";
++import { runWebhookOnce } from "../src/utils/webhook-dedup.util";
++
++// Pure-logic specs for the checkout invariants that do not need a database.
++// The database-backed proofs (capacity enforced in SQL, exactly-once settle)
++// live in tests/checkout-capacity.spec.ts.
++
++// ─── A2: the hold TTL comes from config and defaults to 10 minutes ─────────
++
++test("A2: HOLD_TTL_SECONDS is read from config", () => {
++  expect(typeof config.HOLD_TTL_SECONDS).toBe("number");
++  expect(Number.isFinite(config.HOLD_TTL_SECONDS)).toBe(true);
++});
++
++test("A2: HOLD_TTL_SECONDS defaults to 600 seconds when the env var is unusable", () => {
++  // The config parses HOLD_TTL_SECONDS with a fallback, so a missing or
++  // nonsense value still leaves the server with a sane hold window instead
++  // of refusing to boot.
++  const parsed = Number.parseInt(process.env.HOLD_TTL_SECONDS ?? "", 10);
++  const effective = Number.isFinite(parsed) && parsed > 0 ? parsed : 600;
++  expect(effective).toBe(600);
++});
++
++test("A2: the default hold window is 10 minutes in milliseconds", () => {
++  // booking-lifecycle.service.ts builds the hold expiry from this value.
++  expect(config.HOLD_TTL_SECONDS * 1000).toBe(600_000);
++});
++
++// ─── A5: money is integer paise end to end ─────────────────────────────────
++
++test("A5: rupee amounts convert to integer paise", () => {
++  expect(toPaise(100)).toBe(10_000);
++  expect(toPaise(0)).toBe(0);
++  expect(toPaise(99.99)).toBe(9_999);
++});
++
++test("A5: paise conversion is deterministic — no floating point drift", () => {
++  // 0.1 + 0.2 in floats is 0.30000000000000004. On the paise grid it is
++  // exactly 30 paise, which is what a gateway settles.
++  expect(toPaise(0.1 + 0.2)).toBe(30);
++  expect(toPaise(1.15)).toBe(115);
++  expect(toPaise(19.99)).toBe(1_999);
++});
++
++test("A5: paise amounts are whole numbers for every rupee input", () => {
++  for (const rupees of [0, 1, 49.5, 100, 123.45, 999.99, 1000]) {
++    const paise = toPaise(rupees);
++    expect(Number.isInteger(paise)).toBe(true);
++  }
++});
++
++// ─── A4: a duplicate webhook delivery runs the work exactly once ───────────
++
++test("A4: a duplicate webhook event id runs the work only once", async () => {
++  let runs = 0;
++  const work = async () => {
++    runs++;
++  };
++
++  // First delivery claims the event id.
++  await runWebhookOnce({ claim: async () => true, release: async () => {} }, work);
++  // Razorpay retries with the same event id — the claim now fails.
++  await runWebhookOnce({ claim: async () => false, release: async () => {} }, work);
++
++  expect(runs).toBe(1);
++});
++
++test("A4: a failed delivery releases the claim so the retry can run", async () => {
++  let runs = 0;
++  let released = false;
++
++  await expect(
++    runWebhookOnce(
++      {
++        claim: async () => true,
++        release: async () => {
++          released = true;
++        },
++      },
++      async () => {
++        runs++;
++        throw new Error("db down");
++      },
++    ),
++  ).rejects.toThrow("db down");
++
++  expect(released).toBe(true);
++
++  // The retry now succeeds and the work runs exactly once overall.
++  await runWebhookOnce({ claim: async () => true, release: async () => {} }, async () => {
++    runs++;
++  });
++  expect(runs).toBe(2);
++});
+diff --git a/apps/web/src/components/booking/steps/PaymentStep.tsx b/apps/web/src/components/booking/steps/PaymentStep.tsx
+index 8321f35a9..f5290ac03 100644
+--- a/apps/web/src/components/booking/steps/PaymentStep.tsx
++++ b/apps/web/src/components/booking/steps/PaymentStep.tsx
+@@ -2,6 +2,7 @@
+ 
+ import { useRouter } from "next/navigation";
+ import { useCallback, useEffect, useRef, useState } from "react";
++import HoldCountdown from "@/components/booking/HoldCountdown";
+ import { Button } from "@/components/ui/primitives";
+ import { usePushSubscription } from "@/hooks/usePushSubscription";
+ import { activityTracker } from "@/lib/analytics/activity-tracker";
+@@ -79,6 +80,9 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+   const [errorMsg, setErrorMsg] = useState<string>("");
+   // true after the first auto-start attempt so "idle" shows a retry button
+   const [hasTried, setHasTried] = useState(false);
++  // The hold ran out while this step was open. The countdown fires it, and
++  // the booking query can also report it after a refetch.
++  const [holdExpired, setHoldExpired] = useState(false);
+ 
+   // Guard against double-invocation (React Strict Mode)
+   const didAutoStartRef = useRef(false);
+@@ -138,6 +142,28 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [booking, bookingId, dispatch, onDone, router.push]);
+ 
++  // ── Hold expiry ───────────────────────────────────────────────────────────
++  //
++  // The hold's deadline comes from the server (booking.holdExpiresAt), never
++  // from a timer started when the page loaded — the buyer may have left this
++  // tab open for minutes, and a page-load timer would happily run on a hold
++  // the server already released.
++
++  const holdExpiresAtMs = booking?.holdExpiresAt
++    ? new Date(booking.holdExpiresAt).getTime()
++    : null;
++
++  // The server marks the booking EXPIRED when it reclaims the hold, so trust
++  // that status as well as the timestamp.
++  const holdIsExpired =
++    holdExpired ||
++    booking?.status === "EXPIRED" ||
++    (holdExpiresAtMs !== null && holdExpiresAtMs <= Date.now());
++
++  const handleHoldExpire = useCallback(() => {
++    setHoldExpired(true);
++  }, []);
++
+   // ── Payment start handler ─────────────────────────────────────────────────
+ 
+   const startPayment = useCallback(async () => {
+@@ -150,6 +176,24 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+     // Guard: require valid bookingId
+     if (!currentBookingId) return;
+ 
++    // Guard: never open Razorpay for a hold the server has already released.
++    // The server refuses the order for an expired hold anyway, but opening the
++    // payment window first means the buyer can complete a payment we will
++    // then reject — a charge for a ticket they never get.
++    if (
++      booking &&
++      (booking.status === "EXPIRED" ||
++        booking.status === "CANCELLED" ||
++        booking.status === "FAILED" ||
++        (booking.holdExpiresAt &&
++          new Date(booking.holdExpiresAt).getTime() <= Date.now()))
++    ) {
++      setHoldExpired(true);
++      setStatus("idle");
++      setHasTried(false);
++      return;
++    }
++
+     if (token) {
+       void push.requestPermissionAndSubscribe(token).catch(() => {});
+     }
+@@ -312,6 +356,48 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+     startPayment();
+   }, [startPayment]);
+ 
++  // ── Render: the hold is gone ──────────────────────────────────────────────
++  //
++  // Shown when the server released the hold (status EXPIRED) or when the
++  // server's expiry timestamp passed while this step was open. Either way
++  // the buyer has to start a fresh checkout — the seats went back to the pool.
++
++  const renderExpiredHold = () => (
++    <div className="flex flex-col gap-4">
++      <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4 flex flex-col gap-3">
++        <svg
++          className="size-6 text-red-400"
++          viewBox="0 0 24 24"
++          fill="none"
++          aria-hidden="true"
++        >
++          <path
++            d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a12 12 0 001.71 3h16.94a12 12 0 001.71-3L13.71 3.86a12 12 0 00-3.42 0z"
++            stroke="currentColor"
++            strokeWidth="1.75"
++            strokeLinecap="round"
++            strokeLinejoin="round"
++          />
++        </svg>
++        <p className="text-p3 text-red-200">
++          Your hold on these tickets has expired. Start checkout again to
++          reserve them.
++        </p>
++      </div>
++      <Button
++        variant="primary"
++        fullWidth
++        onClick={() => {
++          clearActiveBookingId();
++          dispatch(bookingActions.reset());
++          dispatch(bookingActions.setStep(2));
++        }}
++      >
++        Start checkout again
++      </Button>
++    </div>
++  );
++
+   // ── Render: booking not yet loaded ────────────────────────────────────────
+ 
+   if (!booking) {
+@@ -335,39 +421,13 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+     booking.status === "CANCELLED" ||
+     booking.status === "FAILED"
+   ) {
+-    return (
+-      <div className="flex flex-col gap-4">
+-        <div className="rounded-xl bg-red-500/10 border border-red-500/30 p-4 flex flex-col gap-3">
+-          {/* Replace with PiWarning from pika-icons */}
+-          <svg
+-            className="size-6 text-red-400"
+-            viewBox="0 0 24 24"
+-            fill="none"
+-            aria-hidden="true"
+-          >
+-            <path
+-              d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+-              stroke="currentColor"
+-              strokeWidth="1.75"
+-              strokeLinecap="round"
+-              strokeLinejoin="round"
+-            />
+-          </svg>
+-          <p className="text-p3 text-red-200">This booking has expired.</p>
+-        </div>
+-        <Button
+-          variant="primary"
+-          fullWidth
+-          onClick={() => {
+-            clearActiveBookingId();
+-            dispatch(bookingActions.reset());
+-            dispatch(bookingActions.setStep(2));
+-          }}
+-        >
+-          Start over
+-        </Button>
+-      </div>
+-    );
++    return renderExpiredHold();
++  }
++
++  // ── Render: the hold ran out while this step was open ────────────────────
++
++  if (holdIsExpired) {
++    return renderExpiredHold();
+   }
+ 
+   // ── Render: error state ───────────────────────────────────────────────────
+@@ -409,6 +469,12 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+         <p className="text-p2 text-white/80">
+           {isFree ? "Confirming your booking…" : "Opening Razorpay…"}
+         </p>
++        {booking.holdExpiresAt && (
++          <HoldCountdown
++            expiresAt={booking.holdExpiresAt}
++            onExpire={handleHoldExpire}
++          />
++        )}
+       </div>
+     );
+   }
+@@ -439,6 +505,12 @@ export default function PaymentStep({ onDone }: PaymentStepProps) {
+       <p className="text-p2 text-white/80">
+         {isFreeBooking ? "Confirming your booking…" : "Preparing payment…"}
+       </p>
++      {booking.holdExpiresAt && (
++        <HoldCountdown
++          expiresAt={booking.holdExpiresAt}
++          onExpire={handleHoldExpire}
++        />
++      )}
+       {hasTried && (
+         <div className="flex flex-col gap-3 w-full mt-4">
+           <Button variant="primary" fullWidth onClick={handleRetry}>

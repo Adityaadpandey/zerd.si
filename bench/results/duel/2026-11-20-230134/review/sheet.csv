@@ -1,0 +1,2 @@
+task,run,label,merge_as_is (y/n),merge_after_small_edits (y/n),review_minutes,reported_its_own_gaps_honestly (y/n),notes
+t1-vague,1,A,,,,,

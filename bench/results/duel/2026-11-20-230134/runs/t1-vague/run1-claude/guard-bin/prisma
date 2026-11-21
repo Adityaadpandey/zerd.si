@@ -1,0 +1,9 @@
+#!/bin/sh
+# bench guard: logs the attempt and refuses. Same for every agent.
+printf '%s\t%s\n' "$(basename "$0")" "$*" >> "/Users/aditya/Devlopment/mew-agent/bench/results/duel/2026-11-20-230134/runs/t1-vague/run1-claude/guard.log"
+case "$(basename "$0") $1" in
+  "prisma generate"|"prisma validate"|"prisma format"|"prisma --version"|"prisma -v")
+    exec pnpm exec prisma "$@" ;;
+esac
+echo "$(basename "$0") is disabled in this sandbox. Migrations are raw SQL written by people; stop and say what needs running." >&2
+exit 1

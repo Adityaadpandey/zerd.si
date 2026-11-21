@@ -1,0 +1,13 @@
+
+ ◆ I made no changes. The issue ("Make the booking flow better.") names no concrete problem, no symptom and no acceptance criteria, so I can't tell what to fix.
+ ▎ 
+ ▎ The booking flow also spans apps/web, apps/server, apps/mobile and BrunoCollection/Booking/. Picking a change at random would mean guessing at the scope.
+ ▎ 
+ ▎ Any of these would make it actionable:
+ ▎ • A specific failure: for example, "the ticket count resets when I go back from the attendees step", with the steps to reproduce it.
+ ▎ • A target app or step: web, mobile or server, and which step (select tickets, attendees, confirm, payment, success).
+ ▎ • A measurable goal: for example, "fewer taps to pay", "show the specific error when payment fails", or "faster booking API response".
+
+ ▎ I did not open any code, so nothing was checked or run.
+  ✦ Rounds: 1 used, 1 estimated, +10 points (within the target)
+  ✦ Worked for 46s  ·  ↓ 3.3k tokens

@@ -1,0 +1,1 @@
+The public event list for a venue returns every event in one response, which gets slow for busy venues. Add cursor pagination to that API: default page size 20, maximum 50, stable order by start time then id, and a next cursor that is absent on the last page. Existing callers that send no pagination params should get the first page, not an error.
