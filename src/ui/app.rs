@@ -884,33 +884,58 @@ impl Cli {
              STATUS: IN PROGRESS{see}\n\nTask: {task}"
         );
         if !self.run_turn(&brief).await {
-            if shots > 0 {
-                self.agent().compact_now().await; // the brief file now carries the pictures, so drop them from the history
+            // the brief file now carries everything the rounds need (pictures included), so round 1 starts clean too
+            {
+                let a = self.agent();
+                a.session.context_manager.lock().unwrap().clear();
+                a.session.loop_detector.lock().unwrap().clear();
             }
             let prompt = format!(
                 "Continue the loop in {rel}. Read it, do the next part of the work, then add a line under # Progress saying what you did and what is left. \
-                 When every 'Done when' item is proven by actually running its command, change the last line to `STATUS: DONE`. Not before."
+                 When every 'Done when' item is proven by actually running its command, change the last line to `STATUS: DONE`. Not before. \
+                 If every item still open needs something outside this workspace (a person, another machine, credentials, a service), \
+                 do not invent side work: change the last line to `STATUS: BLOCKED: <what is needed>` instead."
             );
             let mut round = 0;
+            let mut failed_in_a_row = 0;
             loop {
                 round += 1;
                 uprintln!("{}", paint(&format!("  loop round {round}  ({rel})"), MUTED));
                 if self.run_turn(&prompt).await {
                     break;
                 }
-                let status = self.last_report.as_ref().and_then(|r| r["status"].as_str()).unwrap_or("").to_string();
-                let done = std::fs::read_to_string(&file).map_or(false, |t| t.lines().any(|l| l.trim() == "STATUS: DONE"));
-                if done && !matches!(status.as_str(), "failed" | "verification_failed") {
+                let report = self.last_report.clone().unwrap_or_default();
+                let status = report["status"].as_str().unwrap_or("").to_string();
+                let note = report["status_note"].as_str().unwrap_or("").to_string();
+                let text = std::fs::read_to_string(&file).unwrap_or_default();
+                let last = text.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+                if last == "STATUS: DONE" && !matches!(status.as_str(), "failed" | "verification_failed") {
                     stop = "finished: every 'Done when' item is marked proven".into();
                     break;
                 }
-                // the file keeps the plan, so older rounds are dead weight in every later call
-                let (used, window) = {
-                    let cm = self.agent().session.context_manager.lock().unwrap();
-                    (cm.context_used(), cm.context_window)
-                };
-                if used * 2 > window {
-                    self.agent().compact_now().await;
+                if last.starts_with("STATUS: BLOCKED") {
+                    stop = format!("stopped: {}", last.trim_start_matches("STATUS: "));
+                    break;
+                }
+                // A round that could not reach a model (rate limit, cooldown, no model fits) fails in
+                // milliseconds. Retrying at once only piles prompts into the history until it no longer
+                // fits any model, so stop and let the user resume once the limit resets.
+                if note.starts_with("No usable model") {
+                    stop = format!("stopped: {note}");
+                    break;
+                }
+                failed_in_a_row = if status == "failed" { failed_in_a_row + 1 } else { 0 };
+                if failed_in_a_row >= 3 {
+                    stop = format!("stopped after {failed_in_a_row} failed rounds in a row: {note}");
+                    break;
+                }
+                // The loop file is the memory: goal, checklist and every round's progress. Older rounds left in the
+                // history are re-sent on every call of every later round (72% of all prompt tokens in a 31-round
+                // run), and compacting them costs a call and still carries a summary. Start each round clean, as /clear does.
+                {
+                    let a = self.agent();
+                    a.session.context_manager.lock().unwrap().clear();
+                    a.session.loop_detector.lock().unwrap().clear();
                 }
             }
         }
