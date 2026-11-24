@@ -19,3 +19,7 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 DEMO_PLAN.md
+
+# benchmark output and loop leftovers kept local
+bench/results/
+bench/test_duel_scoring.py
