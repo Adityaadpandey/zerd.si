@@ -3,7 +3,7 @@
 use crate::agent::verify::package_runner;
 use crate::util::re::{lit_i, Re};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const JS_FRAMEWORKS: &[(&str, &str)] = &[
     ("next", "Next.js"), ("react", "React"), ("vue", "Vue"), ("svelte", "Svelte"), ("expo", "Expo"), ("express", "Express"), ("fastify", "Fastify"),
@@ -80,11 +80,67 @@ fn dedup(v: &[String]) -> Vec<String> {
     out
 }
 
+/// The packages of a workspace, each directory that holds a package.json under a workspace folder.
+///
+/// The folders are read from pnpm-workspace.yaml, from the "workspaces" list in package.json, or from the usual
+/// apps/packages layout, so a repo that says nothing still gets its packages found.
+fn workspace_packages(cwd: &Path) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = vec![];
+    if let Ok(text) = std::fs::read_to_string(cwd.join("pnpm-workspace.yaml")) {
+        for line in text.lines() {
+            let l = line.trim().trim_start_matches('-').trim().trim_matches('"').trim_matches('\'');
+            if l.starts_with("packages:") {
+                continue;
+            }
+            if l.contains('*') || l.contains('/') {
+                roots.push(cwd.join(l));
+            }
+        }
+    }
+    if let Ok(pkg) = serde_json::from_str::<Value>(&read(&cwd.join("package.json"))) {
+        for w in pkg["workspaces"].as_array().into_iter().flatten() {
+            if let Some(p) = w.as_str() {
+                roots.push(cwd.join(p));
+            }
+        }
+    }
+    for d in ["apps", "packages", "services", "libs"] {
+        let p = cwd.join(d);
+        if p.is_dir() {
+            roots.push(p);
+        }
+    }
+    let mut out: Vec<PathBuf> = vec![];
+    for root in roots {
+        let entries = walkdir::WalkDir::new(&root).min_depth(1).max_depth(3).into_iter().flatten().filter(|e| e.file_type().is_file() && e.file_name() == "package.json");
+        for e in entries {
+            let dir = e.path().parent().unwrap().to_path_buf();
+            if dir != cwd && !out.contains(&dir) {
+                out.push(dir);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 /// The section, or None when nothing recognisable is there (an empty folder, a folder of repos).
 pub fn describe(cwd: &Path) -> Option<String> {
     let (mut stack, mut run, mut tools): (Vec<String>, Vec<String>, Vec<String>) = (vec![], vec![], vec![]);
     if cwd.join("package.json").is_file() {
         js(cwd, &mut stack, &mut run, &mut tools);
+    }
+    // In a workspace the root package usually has no test script of its own, so the root alone says nothing about
+    // how to run the tests. The packages do, and without them the agent has to guess.
+    for pkg in workspace_packages(cwd) {
+        let (mut s, mut r, mut t) = (vec![], vec![], vec![]);
+        js(&pkg, &mut s, &mut r, &mut t);
+        let rel = crate::util::paths::rel_display(&pkg, cwd);
+        for cmd in r {
+            if !run.iter().any(|x: &String| x == &cmd) {
+                run.push(format!("in {rel}: {cmd}"));
+            }
+        }
     }
     py(cwd, &mut stack, &mut run, &mut tools);
     for (marker, lang, cmd) in [("go.mod", "Go", "test `go test ./...`"), ("Cargo.toml", "Rust", "test `cargo test`"), ("Gemfile", "Ruby", ""), ("pom.xml", "Java (Maven)", "test `mvn test`"), ("composer.json", "PHP", "")] {
@@ -116,4 +172,14 @@ pub fn describe(cwd: &Path) -> Option<String> {
     }
     lines.push("Read from the manifests, so trust these over guessing; the package's own scripts win in a monorepo sub-folder.".into());
     Some(lines.join("\n"))
+}
+
+#[cfg(test)]
+mod probe_mono {
+    use super::*;
+    #[test]
+    fn probe_monorepo_profile() {
+        let d = std::path::Path::new(".zerd/bench-scratch/mono");
+        println!("PROBE profile:\n{}", describe(d).unwrap_or_else(|| "(none)".into()));
+    }
 }
