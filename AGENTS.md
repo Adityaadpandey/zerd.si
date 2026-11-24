@@ -6,8 +6,4 @@
 - Complete the full SEO, AEO, and GEO optimization, not only the sitemap changes.
 - Commit the changes in separate, logical parts.
 - Ensure the terminal AI coding agent section has sufficient top margin.
-- Read `.zerd/loop/20261120-145934.md`, continue the next specified work without changing unrelated code, run each exact verification command, and record the completed and remaining work under `# Progress`; set the final line to `STATUS: DONE` only after every checklist item passes.
-- Continue the loop by reading `.zerd/loop/20261124-212302.md`, completing and proving each checklist item with its exact command, recording progress and remaining work under `# Progress`, and setting `STATUS: DONE` only after every “Done when” item is verified by running its command.
-- Continue the loop by reading the specified file, completing the next actionable work, documenting completed and remaining work under `# Progress`, and setting `STATUS: DONE` only after every “Done when” item is verified by running its command.
-- Continue the loop by reading `.zerd/loop/20261124-212302.md`, performing the next required work, and updating `# Progress`; run every `Done when` command before setting `STATUS: DONE`.
-- Continue the loop from its current state; run each required verification command before updating # Progress and set `STATUS: DONE` only after every “Done when” item passes.
+- In a `/loop` round, read the `.zerd/loop/` file, do the next part without changing unrelated code, record what was done and what is left under `# Progress`, and set `STATUS: DONE` only after running every "Done when" command.
