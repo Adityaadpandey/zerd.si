@@ -136,9 +136,33 @@ fn eslint(cwd: &Path, files: &[String]) -> Vec<(String, String)> {
         // app it is the one check that says the change still fits the rest of the code. It covers the whole package
         // because tsc cannot honour tsconfig.json for a single file.
         if rel.iter().any(|f| f.ends_with(".ts") || f.ends_with(".tsx")) && d.join("tsconfig.json").is_file() && has("tsc") {
-            out.push((format!("{} exec tsc --noEmit", package_runner(cwd, &d)), sub));
+            out.push((format!("{} exec tsc --noEmit", package_runner(cwd, &d)), sub.clone()));
+        }
+        // A typecheck passes on code that breaks a test, so the package's own test script is the check that says
+        // the change still works. Without it a broken test looks like a finished change.
+        for script in package_test_scripts(&d) {
+            out.push((format!("{} run {}", package_runner(cwd, &d), script), sub.clone()));
         }
     }
+    out
+}
+
+/// The test scripts a package.json declares, in a stable order.
+///
+/// A package can call them anything, so the names that mean "run the tests" are looked for; a script that runs
+/// the whole suite is what is wanted here, because a test file cannot be run on its own in most setups.
+fn package_test_scripts(pkg_dir: &Path) -> Vec<String> {
+    let Ok(body) = std::fs::read_to_string(pkg_dir.join("package.json")) else { return vec![] };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&body) else { return vec![] };
+    let Some(scripts) = v.get("scripts").and_then(|s| s.as_object()) else { return vec![] };
+    let mut out = vec![];
+    for (name, _) in scripts {
+        let n = name.to_lowercase();
+        if n == "test" || n == "test:unit" || n == "test:units" || n == "unit" || n == "unit:test" {
+            out.push(name.clone());
+        }
+    }
+    out.sort();
     out
 }
 
@@ -707,4 +731,24 @@ mod tests {
         assert_eq!(changed_since(Some(&a), Some(&b)), vec!["b"]);
         assert!(changed_since(None, Some(&b)).is_empty());
     }
+
+    #[test]
+    fn a_package_test_script_is_a_check() {
+        // a typecheck passes on code that breaks a test, so the package's own test script has to be a check too
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("package.json"), r#"{"scripts":{"test":"vitest run","typecheck":"tsc --noEmit"}}"#).unwrap();
+        std::fs::write(d.path().join("app.ts"), "export const x = 1;\n").unwrap();
+        let checks = detect_checks(d.path(), &["app.ts".to_string()]);
+        assert!(checks.iter().any(|(c, _)| c.contains("run test")), "the test script must be a check: {checks:?}");
+    }
+
+    #[test]
+    fn a_package_without_a_test_script_is_not_given_one() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("package.json"), r#"{"scripts":{"build":"vite build"}}"#).unwrap();
+        std::fs::write(d.path().join("app.ts"), "export const x = 1;\n").unwrap();
+        let checks = detect_checks(d.path(), &["app.ts".to_string()]);
+        assert!(!checks.iter().any(|(c, _)| c.contains("run test")), "no test script means no test check: {checks:?}");
+    }
 }
+
