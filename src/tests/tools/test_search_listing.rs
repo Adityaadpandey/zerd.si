@@ -19,7 +19,7 @@ fn generated_folders_are_not_listed_and_a_listing_is_reused_until_a_write() {
     fs::write(p.join("b.ts"), "y").unwrap();
     // outside an agent round nothing is reused
     assert_eq!(search::list_files(p, &[]).len(), 2);
-    search::hold_listing(true);
+    search::hold_listing(true, p);
     assert_eq!(search::list_files(p, &[]).len(), 2);
     fs::write(p.join("c.ts"), "z").unwrap();
     // same round: the first listing is reused
@@ -27,7 +27,7 @@ fn generated_folders_are_not_listed_and_a_listing_is_reused_until_a_write() {
     // the registry does this after any write
     search::forget_listing();
     assert_eq!(search::list_files(p, &[]).len(), 3);
-    search::hold_listing(false);
+    search::hold_listing(false, p);
 }
 
 #[tokio::test]

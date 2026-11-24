@@ -28,46 +28,73 @@ fn is_secret(name: &str) -> bool {
 type ListKey = (String, Vec<String>, u128);
 
 struct Listing {
+    /// Cached listings, each with the stamp of the file set it was made from.
     cache: HashMap<ListKey, (Instant, Vec<PathBuf>)>,
+    /// How many rounds are holding the listing. While a round is open the stamp it froze is used, so a write inside
+    /// the round does not change the key and the round keeps the listing it started with.
     depth: usize,
+    /// The stamp each root froze when its round opened, so a write outside the round still invalidates the listing.
+    frozen: HashMap<String, u128>,
 }
 
 fn listing() -> &'static Mutex<Listing> {
     static L: OnceLock<Mutex<Listing>> = OnceLock::new();
-    L.get_or_init(|| Mutex::new(Listing { cache: HashMap::new(), depth: 0 }))
+    L.get_or_init(|| Mutex::new(Listing { cache: HashMap::new(), depth: 0, frozen: HashMap::new() }))
 }
 
 /// The agent holds the listing while it runs one round of tool calls, so five parallel greps share one git ls-files
 /// instead of paying it five times. Dropped when the round ends.
-pub fn hold_listing(on: bool) {
+///
+/// The root is given so the round freezes that root's stamp: a write inside the round keeps the listing the round
+/// started with (the write is reported by forget_listing), while a write anywhere else changes the stamp and the
+/// listing is not reused. Without a root, a round running beside another one would freeze the other's stamp.
+pub fn hold_listing(on: bool, root: &Path) {
     let mut l = listing().lock().unwrap();
-    l.depth = if on { l.depth + 1 } else { l.depth.saturating_sub(1) };
-    if l.depth == 0 {
-        l.cache.clear();
+    if on {
+        l.depth += 1;
+        l.frozen.insert(root.to_string_lossy().to_string(), list_stamp(root));
+    } else {
+        l.depth = l.depth.saturating_sub(1);
+        if l.depth == 0 {
+            l.cache.clear();
+            l.frozen.clear();
+        }
     }
 }
-
 /// A write may have added or removed files: the next grep lists again.
 pub fn forget_listing() {
     listing().lock().unwrap().cache.clear();
 }
 
+/// When the set of files under root last changed.
+///
+/// The git index covers tracked files, but it does not exist until something is staged, so in a repo where
+/// nothing is staged the stamp stayed 0 and the cache handed back a listing from before the write. The root
+/// directory's own mtime moves whenever a file is added or removed there, which is the case that has to show up.
+fn list_stamp(root: &Path) -> u128 {
+    let mtime = |p: PathBuf| {
+        std::fs::metadata(p).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos())
+    };
+    mtime(root.join(".git/index")) ^ mtime(root.to_path_buf()).rotate_left(1)
+}
+
 /// Every searchable file under root, in a stable sorted order.
 pub fn list_files(root: &Path, forbidden: &[String]) -> Vec<PathBuf> {
-    let stamp = std::fs::metadata(root.join(".git/index")).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok()).map_or(0, |d| d.as_nanos());
-    let key: ListKey = (root.to_string_lossy().to_string(), forbidden.to_vec(), stamp);
-    {
-        let l = listing().lock().unwrap();
-        if l.depth > 0 {
-            if let Some((t, files)) = l.cache.get(&key) {
-                if t.elapsed() < LIST_TTL {
-                    return files.clone();
-                }
+    let stamp = list_stamp(root);
+    let mut l = listing().lock().unwrap();
+    // A round that is open for this root froze its stamp, so a write inside the round does not change the key and
+    // the round keeps the listing it started with. Otherwise the stamp is live, so a write that added or removed a
+    // file changes the key and the listing is not reused.
+    let name = root.to_string_lossy().to_string();
+    let key: ListKey = (name.clone(), forbidden.to_vec(), l.frozen.get(&name).copied().unwrap_or(stamp));
+    if l.depth > 0 {
+        if let Some((at, files)) = l.cache.get(&key) {
+            if at.elapsed() < LIST_TTL {
+                return files.clone();
             }
         }
     }
     let files = list_files_uncached(root, forbidden);
-    let mut l = listing().lock().unwrap();
     if l.depth > 0 {
         l.cache.insert(key, (Instant::now(), files.clone()));
     }

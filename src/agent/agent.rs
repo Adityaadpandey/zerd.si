@@ -1812,7 +1812,7 @@ impl Agent {
     /// Run calls in model order. Runs of read-only calls (e.g. five greps in a row) execute concurrently; anything that
     /// writes or shells out acts as a barrier and runs alone, so edits never race with reads.
     async fn run_tool_calls(&mut self, calls: &[ToolCall], tx: &Tx, out: &mut Vec<(String, String, bool)>) {
-        crate::util::search::hold_listing(true);
+        crate::util::search::hold_listing(true, &self.config.get().cwd);
         let mut i = 0;
         while i < calls.len() {
             let mut j = i + 1;
@@ -1875,7 +1875,7 @@ impl Agent {
                 emit(tx, AgentEvent::ToolCallComplete { call_id: tc.call_id.clone(), name: tc.name.clone(), result });
             }
         }
-        crate::util::search::hold_listing(false);
+        crate::util::search::hold_listing(false, &self.config.get().cwd);
     }
 }
 
