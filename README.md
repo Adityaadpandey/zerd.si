@@ -707,10 +707,13 @@ touches your real sessions or keys. About 28k lines of Rust plus 8.6k lines of t
 - **No image input** (pasting a screenshot) and no IDE extension.
 - **Signature checks cover Python and JS/TS.** Python outlines use an indentation-based reader, not a real parser. Diagnostics
   come from `tsserver` for TypeScript and quick checkers elsewhere, not a general language server.
-- **Token counts are estimated** (bytes / 4), not counted exactly.
-- **The benchmarks are small.** One project and one run each in round 2; 11 tasks in round 1, taken on the earlier Python
-  version. They show where verification pays off, not a ranking. The design is tuned on one real repo, so treat defaults as
-  measured there.
+- **Token counts are exact for model calls** (the provider's own usage numbers, including cached input) but **estimated for
+  tool results** (bytes / 4), so a report about which tool result was heaviest is a rough guide.
+- **The benchmarks are small.** The duel suite has 12 tasks and runs both agents on the same model, but only 3 tasks
+  have a hidden test so far and the others are scored by a blind review. On the two trap tasks that were run with both
+  agents on claude-sonnet-5-5 (2 runs each, against a stand-in checkout rather than the real tunyt app), both stopped correctly and changed nothing, and zerd used 21k prompt tokens
+  against Claude Code's 96k while costing $0.19 against $0.28 at the same prices. That is four runs on two tasks, not a
+  ranking. The design is tuned on one real repo, so treat defaults as measured there.
 - **A tool that checks its work is still software.** zerd's webhook report lists its own open risks. It's more useful when the
   agent says what it didn't verify, and that goes for this README too.
 
