@@ -1,5 +1,6 @@
 {
   "tier": "T3",
   "outcome": "resolve",
-  "max_minutes": 40
+  "max_minutes": 40,
+  "needs_hidden_test": true
 }

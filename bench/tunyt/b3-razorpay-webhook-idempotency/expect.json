@@ -1,4 +1,5 @@
 {
   "tier": "T2",
-  "outcome": "resolve"
+  "outcome": "resolve",
+  "needs_hidden_test": true
 }

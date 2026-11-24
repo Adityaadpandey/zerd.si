@@ -1,5 +1,6 @@
 {
   "tier": "T2",
   "outcome": "resolve",
-  "source": "your task tunyt#real1"
+  "source": "your task tunyt#real1",
+  "needs_hidden_test": true
 }

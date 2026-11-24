@@ -314,6 +314,16 @@ pub async fn main(argv: Vec<String>) -> i32 {
     let code = exit_code(&status, &note, stop.as_ref(), !why.is_empty(), rounds_cut);
     let events = tracer.snapshot();
     let mut models: Vec<String> = events.iter().filter(|e| e["event"] == "model_call" && e["ok"] == true).filter_map(|e| e["model"].as_str().map(String::from)).collect();
+    // the model that did the work, kept apart from the helpers: a benchmark that compares two agents has to
+    // know which model each one really used. The orient and scout steps run first on a fast model, so the
+    // first call is not the answer - the call with the default role is.
+    let main_model = events
+        .iter()
+        .filter(|e| e["event"] == "model_call" && e["ok"] == true)
+        .find(|e| e["role"] == "default")
+        .or_else(|| events.iter().find(|e| e["event"] == "model_call" && e["ok"] == true))
+        .and_then(|e| e["model"].as_str())
+        .map(String::from);
     models.sort();
     models.dedup();
     let usage = crate::util::cost::summarize_usage(&events, &pricing);
@@ -331,6 +341,7 @@ pub async fn main(argv: Vec<String>) -> i32 {
         "head_sha": git(&cwd, &["rev-parse", "HEAD"], None).map(|b| String::from_utf8_lossy(&b).trim().to_string()),
         "diff_sha256": diff_sha256(&cwd),
         "model": models.join(","),
+        "main_model": main_model,
         "cost_usd": cost,
         // an unpriced model has no dollar figure, which also means --max-cost never stopped it. Say so instead of a bare null.
         "cost_note": if cost.is_null() { json!("no price for this model in config, so the cost cap was not enforced; token counts below are real") } else { Value::Null },
