@@ -36,6 +36,51 @@ fn squash(s: &str, n: usize) -> String {
     crate::util::text::head_chars(&crate::util::text::squash(s), n)
 }
 
+/// Does the file already carry this rule, even if the judge worded it differently this time?
+///
+/// The judge paraphrases: "Continue the loop by reading X" and "Read X and continue the loop" are one rule, not
+/// two. Comparing the words both have in common, and only calling it the same rule when nearly all of the new
+/// rule's own words are already there, keeps AGENTS.md a list of rules instead of a list of restatements.
+fn has_rule(body: &str, text: &str) -> bool {
+    body.lines().filter(|l| l.trim_start().starts_with("- ")).any(|line| same_rule(line.trim_start().trim_start_matches("- "), text))
+}
+
+/// Are these two wordings of the same rule?
+///
+/// A paraphrase keeps the original's distinctive words and only rearranges the filler, so it agrees with the
+/// original in both directions. Two rules that merely share common words ("this lesson is noise and goes" and
+/// "this lesson is fine and stays") agree in neither direction: each has a word the other does not, and those
+/// are the words that carry the meaning.
+fn same_rule(have: &str, text: &str) -> bool {
+    let words = |s: &str| -> Vec<String> {
+        s.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() > 2)
+            .map(|w| w.to_lowercase())
+            .collect()
+    };
+    let new_words = words(text);
+    let have_words = words(have);
+    if new_words.is_empty() || have_words.is_empty() {
+        return false;
+    }
+    let shared = new_words.iter().filter(|w| have_words.contains(w)).count();
+    let back = have_words.iter().filter(|w| new_words.contains(w)).count();
+    // the shorter rule must be mostly in the longer one: a paraphrase may be longer or shorter than the rule it
+    // restates, so the two sides are not compared symmetrically. Two different rules share only the filler, so
+    // even the shorter one is not mostly there.
+    let (short, long) = if new_words.len() <= have_words.len() { (shared, new_words.len()) } else { (back, have_words.len()) };
+    if short * 3 < long * 2 {
+        return false;
+    }
+    // What tells a paraphrase from a different rule is which words differ. A paraphrase drops and adds ordinary
+    // words ("reading", "completing") while keeping the ones that carry the meaning ("loop", "Progress", "DONE"),
+    // so the words only one side has must be few. Two different rules differ in the meaningful words: "noise and
+    // goes" against "fine and stays" keeps only the filler in common.
+    let only_new = new_words.iter().filter(|w| !have_words.contains(w)).count();
+    let only_have = have_words.iter().filter(|w| !new_words.contains(w)).count();
+    only_new * 5 <= new_words.len() * 2 && only_have * 5 <= have_words.len() * 2
+}
+
 /// Ask a model whether `message` (the user's reply) is a correction, a confirmation or a preference worth keeping.
 /// Returns the rule to save, or "" when there is nothing to learn. Never fails: learning must not hurt a run.
 pub async fn judge(client: &Arc<LLMClient>, before: &str, answer: &str, message: &str) -> String {
@@ -92,6 +137,11 @@ impl Learned {
         if text.split_whitespace().count() < 4 || exists {
             return false;
         }
+        // the store also holds rules the judge worded differently, so a paraphrase of one already learned is not a
+        // new lesson: without this, every session that learns the same kind of rule adds another copy of it
+        if self.data["lessons"].as_array().unwrap().iter().any(|l| same_rule(l["text"].as_str().unwrap_or(""), &text)) {
+            return false;
+        }
         let in_file = self.to_agents_md(&text);
         let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let lessons = self.data["lessons"].as_array_mut().unwrap();
@@ -111,6 +161,11 @@ impl Learned {
         let mut body = if f.is_file() { std::fs::read_to_string(&f).unwrap_or_default() } else { String::new() };
         if !body.contains(HEADING) {
             body = format!("{}{HEADING}\n", if body.trim().is_empty() { String::new() } else { format!("{}\n\n", body.trim_end_matches('\n')) });
+        }
+        // A rule the judge words slightly differently each time is the same rule: without this, AGENTS.md fills
+        // with paraphrases of one instruction and every other rule in it gets harder to see.
+        if has_rule(&body, text) {
+            return false;
         }
         std::fs::write(&f, format!("{}\n- {text}\n", body.trim_end_matches('\n'))).is_ok()
     }
@@ -226,5 +281,55 @@ mod tests {
         let mut l2 = l2;
         assert!(l2.forget(1).is_some());
         assert!(!std::fs::read_to_string(repo.path().join("AGENTS.md")).unwrap().contains("Always run"));
+    }
+
+    #[test]
+    fn a_rule_worded_differently_is_not_written_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let mut l = Learned::with_base(repo.path(), dir.path());
+        assert!(l.add_lesson("Continue the loop by reading .zerd/loop/x.md, completing the next task, and updating Progress", "user"));
+        // the judge paraphrases the same rule next time: it is not a new lesson, and AGENTS.md must not grow a
+        // second copy of it
+        assert!(!l.add_lesson("Continue the loop by reading .zerd/loop/x.md, completing the next task, and updating Progress with what remains", "user"));
+        let body = std::fs::read_to_string(repo.path().join("AGENTS.md")).unwrap();
+        assert_eq!(body.lines().filter(|l| l.trim_start().starts_with("- ")).count(), 1, "one rule, one line: {body}");
+    }
+
+    #[test]
+    fn a_paraphrase_that_rewords_more_is_still_the_same_rule() {
+        // the judge can drop the file path and say the same thing in other words: still one rule
+        let kept = "Continue the loop by reading `.zerd/loop/20261124-212302.md`, completing and proving each checklist item with its exact command, recording progress and remaining work under `# Progress`, and setting `STATUS: DONE` only after every “Done when” item is verified by running its command.";
+        let reworded = "Continue the loop from its current state; update `# Progress` with completed work and remaining items, and set `STATUS: DONE` only after every “Done when” criterion passes by running its command.";
+        assert!(same_rule(kept, reworded), "a reworded rule is the same rule");
+        // but two rules that differ in the words that carry the meaning are two rules
+        assert!(!same_rule("this lesson is noise and goes", "this lesson is fine and stays"));
+    }
+
+    #[test]
+    fn a_different_rule_is_still_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let mut l = Learned::with_base(repo.path(), dir.path());
+        assert!(l.add_lesson("Always run the linter before committing code", "user"));
+        assert!(l.add_lesson("Keep the changelog updated for every user-facing change", "user"));
+        let body = std::fs::read_to_string(repo.path().join("AGENTS.md")).unwrap();
+        assert_eq!(body.lines().filter(|l| l.trim_start().starts_with("- ")).count(), 2, "{body}");
+    }
+
+    #[test]
+    fn a_paraphrase_of_a_rule_already_learned_is_not_a_new_lesson() {
+        // The store outlives the process, so a rule learned by an older session must stop a paraphrase from
+        // being learned again, even when AGENTS.md was never written.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let mut l = Learned::with_base(repo.path(), dir.path());
+        assert!(l.add_lesson("Always run the linter before committing code", "user"));
+        // same rule, different words
+        assert!(!l.add_lesson("Always run the linter before you commit any code", "user"));
+        // a different rule is still learned
+        assert!(l.add_lesson("Keep the changelog updated for every user-facing change", "user"));
+        let lessons = l.data["lessons"].as_array().unwrap();
+        assert_eq!(lessons.len(), 2, "the paraphrase must not become a lesson");
     }
 }
